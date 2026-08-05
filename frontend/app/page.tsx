@@ -11,12 +11,22 @@ type UploadedFile = {
   filename: string;
   size: number;
   upload_date: string;
+  status?: string;
+  progress?: number;
 };
 
 type ChatSession = {
   session_id: string;
   title: string;
   created_at: string;
+};
+
+const getFileIcon = (filename: string) => {
+  const ext = filename.split(".").pop()?.toLowerCase();
+  if (ext === "pdf") return "📕";
+  if (ext === "docx") return "📘";
+  if (ext === "txt") return "📄";
+  return "📎";
 };
 
 export default function Home() {
@@ -29,6 +39,7 @@ export default function Home() {
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const formatSize = (bytes: number) => {
     if (bytes < 1024) return bytes + " B";
@@ -36,13 +47,21 @@ export default function Home() {
     return (bytes / (1024 * 1024)).toFixed(1) + " MB";
   };
 
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages, thinking]);
+
   const fetchFiles = async () => {
     try {
       const res = await fetch("http://localhost:8000/files");
       const data = await res.json();
       setUploadedFiles(data.files);
     } catch (err) {
-      console.error("Files fetch karne me error:", err);
+      console.error(err);
     }
   };
 
@@ -53,7 +72,7 @@ export default function Home() {
       setSessions(data.sessions);
       return data.sessions as ChatSession[];
     } catch (err) {
-      console.error("Sessions fetch karne me error:", err);
+      console.error(err);
       return [];
     }
   };
@@ -64,7 +83,7 @@ export default function Home() {
       const data = await res.json();
       setMessages(data.messages);
     } catch (err) {
-      console.error("Messages fetch karne me error:", err);
+      console.error(err);
     }
   };
 
@@ -76,7 +95,7 @@ export default function Home() {
       setActiveSessionId(data.session_id);
       setMessages([]);
     } catch (err) {
-      console.error("Naya chat banane me error:", err);
+      console.error(err);
     }
   };
 
@@ -107,7 +126,6 @@ export default function Home() {
     }
   };
 
-  // Page load hote hi: files, sessions fetch karo. Agar koi session nahi hai to nayi bana do.
   useEffect(() => {
     const init = async () => {
       await fetchFiles();
@@ -123,6 +141,30 @@ export default function Home() {
     init();
   }, []);
 
+  // File processing status ko poll karta hai jab tak "ready" ya "error" na ho jaye
+  const pollFileStatus = (fileId: string) => {
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`http://localhost:8000/files/${fileId}/status`);
+        const data = await res.json();
+
+        setUploadedFiles((prev) =>
+          prev.map((f) =>
+            f.file_id === fileId ? { ...f, status: data.status, progress: data.progress } : f
+          )
+        );
+
+        if (data.status === "ready" || data.status === "error") {
+          clearInterval(interval);
+          await fetchFiles();
+        }
+      } catch (err) {
+        clearInterval(interval);
+        console.error(err);
+      }
+    }, 1500);
+  };
+
   const handleFile = async (file: File) => {
     setUploading(true);
     const formData = new FormData();
@@ -136,7 +178,9 @@ export default function Home() {
 
       if (!res.ok) throw new Error("Upload failed");
 
+      const data = await res.json();
       await fetchFiles();
+      pollFileStatus(data.file_id);
     } catch (err) {
       alert("File upload me error aa gaya. Backend chal raha hai check karo.");
       console.error(err);
@@ -147,7 +191,6 @@ export default function Home() {
 
   const handleDeleteFile = async (fileId: string) => {
     if (!confirm("Ye file delete karni hai?")) return;
-
     try {
       await fetch(`http://localhost:8000/files/${fileId}`, { method: "DELETE" });
       await fetchFiles();
@@ -188,13 +231,7 @@ export default function Home() {
       });
 
       const data = await res.json();
-
-      setMessages((prev) => [
-        ...prev,
-        { sender: "ai", text: data.answer },
-      ]);
-
-      // Agar ye pehla message tha, to sidebar me title update karne ke liye sessions refresh karo
+      setMessages((prev) => [...prev, { sender: "ai", text: data.answer }]);
       await fetchSessions();
     } catch (err) {
       setMessages((prev) => [
@@ -208,43 +245,49 @@ export default function Home() {
   };
 
   return (
-    <div className="flex h-screen bg-[#F7F8FA] font-sans">
+    <div className="flex h-screen bg-[#FAFAFB] text-[#1A1B23]">
 
       {/* Sidebar */}
-      <div className="w-[300px] bg-[#161A23] text-white flex flex-col p-5">
-        <div className="flex items-center gap-2 mb-6">
-          <div className="w-8 h-8 rounded-lg bg-[#6D5DF6] flex items-center justify-center font-bold text-sm">
+      <div className="w-[280px] flex flex-col bg-gradient-to-b from-[#14141F] to-[#0D0D14] text-white">
+
+        {/* Logo */}
+        <div className="flex items-center gap-2.5 px-5 pt-6 pb-5">
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-[#7C6FF6] to-[#5B4CE0] flex items-center justify-center font-bold text-sm shadow-lg shadow-[#7C6FF6]/30">
             FC
           </div>
-          <h1 className="text-lg font-semibold">File Chatbot</h1>
+          <h1 className="text-[15px] font-bold tracking-tight">File Chatbot</h1>
         </div>
 
-        {/* New Chat Button */}
-        <button
-          onClick={handleNewChat}
-          className="mb-4 w-full bg-[#6D5DF6] hover:bg-[#5B4CE0] transition-colors text-sm font-medium py-2.5 rounded-lg flex items-center justify-center gap-2"
-        >
-          + New Chat
-        </button>
+        {/* New Chat */}
+        <div className="px-4">
+          <button
+            onClick={handleNewChat}
+            className="w-full bg-gradient-to-r from-[#7C6FF6] to-[#6D5DF6] hover:shadow-lg hover:shadow-[#7C6FF6]/25 transition-all text-sm font-semibold py-2.5 rounded-xl flex items-center justify-center gap-2 active:scale-[0.98]"
+          >
+            <span className="text-base leading-none">+</span> New Chat
+          </button>
+        </div>
 
-        {/* Chat Sessions List */}
-        <div className="mb-6 max-h-[35%] overflow-y-auto">
-          <h3 className="text-xs uppercase text-gray-400 mb-2 tracking-wide">Chats</h3>
-          <ul className="space-y-1">
+        {/* Chat Sessions */}
+        <div className="mt-5 px-4 max-h-[32%] overflow-y-auto">
+          <h3 className="text-[10px] uppercase text-gray-500 font-semibold mb-2 tracking-wider px-1">
+            Recent Chats
+          </h3>
+          <ul className="space-y-0.5">
             {sessions.map((s) => (
               <li
                 key={s.session_id}
                 onClick={() => handleSelectSession(s.session_id)}
-                className={`group flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-sm cursor-pointer transition-colors ${
+                className={`group flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-[13px] cursor-pointer transition-all ${
                   activeSessionId === s.session_id
-                    ? "bg-[#6D5DF6]/20 text-white"
-                    : "hover:bg-white/5 text-gray-300"
+                    ? "bg-white/10 text-white"
+                    : "hover:bg-white/5 text-gray-400"
                 }`}
               >
                 <span className="truncate">{s.title}</span>
                 <button
                   onClick={(e) => handleDeleteSession(s.session_id, e)}
-                  className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-300 text-xs transition-opacity flex-shrink-0"
+                  className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-red-400 text-xs transition-opacity flex-shrink-0"
                 >
                   ✕
                 </button>
@@ -253,54 +296,78 @@ export default function Home() {
           </ul>
         </div>
 
+        <div className="mx-4 my-4 h-px bg-white/5" />
+
         {/* Drag & Drop Zone */}
-        <div
-          onDragOver={(e) => { e.preventDefault(); setDragActive(true); }}
-          onDragLeave={() => setDragActive(false)}
-          onDrop={handleDrop}
-          onClick={() => fileInputRef.current?.click()}
-          className={`border-2 border-dashed rounded-xl p-4 text-center cursor-pointer transition-colors ${
-            dragActive ? "border-[#6D5DF6] bg-[#6D5DF6]/10" : "border-gray-600 hover:border-gray-400"
-          }`}
-        >
-          {uploading ? (
-            <p className="text-xs text-gray-300">⏳ Upload ho raha hai...</p>
-          ) : (
-            <p className="text-xs text-gray-300">
-              📄 File drag karo ya click karo
-            </p>
-          )}
-          <input
-            ref={fileInputRef}
-            type="file"
-            onChange={handleFileChange}
-            className="hidden"
-          />
+        <div className="px-4">
+          <div
+            onDragOver={(e) => { e.preventDefault(); setDragActive(true); }}
+            onDragLeave={() => setDragActive(false)}
+            onDrop={handleDrop}
+            onClick={() => fileInputRef.current?.click()}
+            className={`border-[1.5px] border-dashed rounded-xl p-4 text-center cursor-pointer transition-all ${
+              dragActive
+                ? "border-[#7C6FF6] bg-[#7C6FF6]/10"
+                : "border-white/15 hover:border-white/30 hover:bg-white/[0.02]"
+            }`}
+          >
+            {uploading ? (
+              <div className="flex items-center justify-center gap-1.5 text-xs text-gray-300">
+                <span className="dot w-1.5 h-1.5 rounded-full bg-[#7C6FF6]" />
+                <span className="dot w-1.5 h-1.5 rounded-full bg-[#7C6FF6]" />
+                <span className="dot w-1.5 h-1.5 rounded-full bg-[#7C6FF6]" />
+                <span className="ml-1">Uploading</span>
+              </div>
+            ) : (
+              <p className="text-xs text-gray-400">
+                <span className="text-lg block mb-1">📤</span>
+                Drop file or <span className="text-[#9B8FFF]">browse</span>
+              </p>
+            )}
+            <input ref={fileInputRef} type="file" name="fileUpload" id="fileUpload" onChange={handleFileChange} className="hidden" />
+          </div>
         </div>
 
-        {/* Uploaded Files List */}
-        <div className="mt-4 flex-1 overflow-y-auto">
-          <h3 className="text-xs uppercase text-gray-400 mb-2 tracking-wide">
-            Files ({uploadedFiles.length})
+        {/* Uploaded Files */}
+        <div className="mt-4 px-4 flex-1 overflow-y-auto pb-4">
+          <h3 className="text-[10px] uppercase text-gray-500 font-semibold mb-2 tracking-wider px-1">
+            Documents · {uploadedFiles.length}
           </h3>
 
           {uploadedFiles.length === 0 ? (
-            <p className="text-xs text-gray-500">Koi file nahi</p>
+            <p className="text-xs text-gray-600 px-1">No documents yet</p>
           ) : (
             <ul className="space-y-1.5">
               {uploadedFiles.map((file) => (
                 <li
                   key={file.file_id}
-                  className="flex items-center gap-2 bg-white/5 rounded-lg p-2 text-xs hover:bg-white/10 transition-colors group"
+                  className="flex items-center gap-2.5 bg-white/[0.03] rounded-lg p-2.5 text-xs hover:bg-white/[0.06] transition-colors group border border-white/[0.04]"
                 >
-                  <span>📄</span>
+                  <span className="text-base">{getFileIcon(file.filename)}</span>
                   <div className="flex-1 overflow-hidden">
-                    <p className="truncate">{file.filename}</p>
-                    <p className="text-gray-400">{formatSize(file.size)}</p>
+                    <p className="truncate text-gray-200">{file.filename}</p>
+
+                    {file.status === "processing" ? (
+                      <div className="mt-1">
+                        <div className="w-full bg-white/10 rounded-full h-1.5 overflow-hidden">
+                          <div
+                            className="bg-[#7C6FF6] h-1.5 rounded-full transition-all duration-300"
+                            style={{ width: `${file.progress || 0}%` }}
+                          />
+                        </div>
+                        <p className="text-gray-500 text-[10px] mt-0.5">
+                          Extracting... {file.progress || 0}%
+                        </p>
+                      </div>
+                    ) : file.status === "error" ? (
+                      <p className="text-red-400 text-[11px]">Processing failed</p>
+                    ) : (
+                      <p className="text-gray-500 text-[11px]">{formatSize(file.size)}</p>
+                    )}
                   </div>
                   <button
                     onClick={() => handleDeleteFile(file.file_id)}
-                    className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-300 transition-opacity"
+                    className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-red-400 transition-opacity flex-shrink-0"
                   >
                     ✕
                   </button>
@@ -311,30 +378,46 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Right side - Chat Section */}
-      <div className="flex-1 flex flex-col">
+      {/* Right side - Chat */}
+      <div className="flex-1 flex flex-col relative">
 
-        <div className="border-b border-gray-200 px-6 py-4 bg-white">
-          <h2 className="font-semibold text-gray-800">💬 Chat with your files</h2>
-          <p className="text-xs text-gray-400">File upload karke uske baare me sawal pucho</p>
+        {/* Header */}
+        <div className="border-b border-gray-100 px-8 py-4 bg-white/80 backdrop-blur-sm flex items-center justify-between">
+          <div>
+            <h2 className="font-bold text-[15px] text-[#1A1B23]">Chat with your files</h2>
+            <p className="text-xs text-gray-400 mt-0.5">Ask anything about your uploaded documents</p>
+          </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-6 py-6 space-y-4">
+        {/* Messages */}
+        <div className="flex-1 overflow-y-auto px-8 py-8 space-y-5 max-w-3xl w-full mx-auto">
           {messages.length === 0 ? (
-            <div className="h-full flex items-center justify-center text-gray-400 text-sm">
-              Koi file upload karo aur uske baare me sawal poochho 👋
+            <div className="h-full flex flex-col items-center justify-center text-center gap-3">
+              <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-[#7C6FF6]/10 to-[#5B4CE0]/10 flex items-center justify-center text-3xl">
+                💬
+              </div>
+              <p className="text-gray-400 text-sm max-w-xs">
+                Upload a document from the sidebar and start asking questions about it
+              </p>
             </div>
           ) : (
             messages.map((msg, idx) => (
               <div
                 key={idx}
-                className={`flex ${msg.sender === "user" ? "justify-end" : "justify-start"}`}
+                className={`msg-animate flex items-end gap-2.5 ${
+                  msg.sender === "user" ? "justify-end" : "justify-start"
+                }`}
               >
+                {msg.sender === "ai" && (
+                  <div className="w-7 h-7 rounded-full bg-gradient-to-br from-[#7C6FF6] to-[#5B4CE0] flex items-center justify-center text-[11px] font-bold text-white flex-shrink-0">
+                    AI
+                  </div>
+                )}
                 <div
-                  className={`max-w-[70%] px-4 py-2.5 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap ${
+                  className={`max-w-[75%] px-4 py-3 text-[13.5px] leading-relaxed whitespace-pre-wrap ${
                     msg.sender === "user"
-                      ? "bg-[#6D5DF6] text-white rounded-br-sm"
-                      : "bg-white border border-gray-200 text-gray-800 rounded-bl-sm"
+                      ? "bg-gradient-to-br from-[#7C6FF6] to-[#6D5DF6] text-white rounded-2xl rounded-br-md shadow-md shadow-[#7C6FF6]/20"
+                      : "bg-white border border-gray-100 text-gray-800 rounded-2xl rounded-bl-md shadow-sm"
                   }`}
                 >
                   {msg.text}
@@ -344,30 +427,39 @@ export default function Home() {
           )}
 
           {thinking && (
-            <div className="flex justify-start">
-              <div className="bg-white border border-gray-200 text-gray-400 px-4 py-2.5 rounded-2xl rounded-bl-sm text-sm">
-                AI soch raha hai...
+            <div className="msg-animate flex items-end gap-2.5 justify-start">
+              <div className="w-7 h-7 rounded-full bg-gradient-to-br from-[#7C6FF6] to-[#5B4CE0] flex items-center justify-center text-[11px] font-bold text-white flex-shrink-0">
+                AI
+              </div>
+              <div className="bg-white border border-gray-100 px-4 py-3.5 rounded-2xl rounded-bl-md shadow-sm flex items-center gap-1.5">
+                <span className="dot w-1.5 h-1.5 rounded-full bg-gray-400" />
+                <span className="dot w-1.5 h-1.5 rounded-full bg-gray-400" />
+                <span className="dot w-1.5 h-1.5 rounded-full bg-gray-400" />
               </div>
             </div>
           )}
+          <div ref={messagesEndRef} />
         </div>
 
-        <div className="border-t border-gray-200 bg-white px-6 py-4">
-          <div className="flex items-center gap-3 bg-[#F7F8FA] rounded-xl px-4 py-2.5">
+        {/* Input */}
+        <div className="px-8 pb-6 pt-2">
+          <div className="max-w-3xl w-full mx-auto flex items-center gap-3 bg-white border border-gray-200 rounded-2xl px-4 py-2 shadow-sm focus-within:border-[#7C6FF6]/50 focus-within:ring-4 focus-within:ring-[#7C6FF6]/10 transition-all">
             <input
               type="text"
+              name="chatMessage"
+              id="chatMessage"
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleSend()}
-              placeholder="Apna sawal likho..."
-              className="flex-1 bg-transparent outline-none text-sm"
+              placeholder="Ask a question about your documents..."
+              className="flex-1 bg-transparent outline-none text-sm py-2 placeholder:text-gray-400"
             />
             <button
               onClick={handleSend}
-              disabled={thinking}
-              className="bg-[#6D5DF6] text-white text-sm px-4 py-2 rounded-lg hover:bg-[#5B4CE0] transition-colors disabled:opacity-50"
+              disabled={thinking || !input.trim()}
+              className="bg-gradient-to-r from-[#7C6FF6] to-[#6D5DF6] text-white text-sm font-semibold w-9 h-9 rounded-xl flex items-center justify-center hover:shadow-lg hover:shadow-[#7C6FF6]/25 transition-all disabled:opacity-30 disabled:shadow-none active:scale-95"
             >
-              Send
+              ↑
             </button>
           </div>
         </div>
