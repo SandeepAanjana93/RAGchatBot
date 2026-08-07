@@ -13,7 +13,7 @@ from PIL import Image
 import cv2
 import numpy as np
 import chromadb
-from sentence_transformers import SentenceTransformer
+
 from pymongo import MongoClient
 import gridfs
 from bson import ObjectId
@@ -53,7 +53,7 @@ files_collection = db["files_metadata"]
 sessions_collection = db["chat_sessions"]
 messages_collection = db["chat_messages"]
 
-embedder = SentenceTransformer("all-MiniLM-L6-v2")
+
 chroma_client = chromadb.PersistentClient(path="chroma_db")
 collection = chroma_client.get_or_create_collection(name="documents")
 
@@ -253,10 +253,10 @@ def process_file_background(file_id: str, file_bytes: bytes, filename: str):
         chunks = chunk_text(extracted_text)
 
         if chunks:
-            embeddings = embedder.encode(chunks).tolist()
             ids = [f"{file_id}_chunk_{i}" for i in range(len(chunks))]
             metadatas = [{"filename": filename, "file_id": file_id, "chunk_index": i} for i in range(len(chunks))]
-            collection.add(documents=chunks, embeddings=embeddings, ids=ids, metadatas=metadatas)
+            # Using ChromaDB's default embedding function to save RAM
+            collection.add(documents=chunks, ids=ids, metadatas=metadatas)
 
         files_collection.update_one(
             {"_id": ObjectId(file_id)},
@@ -414,8 +414,8 @@ async def chat(request: ChatRequest):
         title = question[:40] + ("..." if len(question) > 40 else "")
         sessions_collection.update_one({"_id": ObjectId(session_id)}, {"$set": {"title": title}})
 
-    question_embedding = embedder.encode([question]).tolist()
-    results = collection.query(query_embeddings=question_embedding, n_results=15)
+    # Query ChromaDB (it will embed automatically)
+    results = collection.query(query_texts=[question], n_results=15)
 
     relevant_chunks = results["documents"][0] if results["documents"] else []
     context = "\n\n---\n\n".join(relevant_chunks)
