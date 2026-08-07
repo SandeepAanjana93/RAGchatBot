@@ -46,11 +46,25 @@ export default function Home() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Load dark mode preference from localStorage
+  // Load dark mode preference and Device ID from localStorage
   useEffect(() => {
     const saved = localStorage.getItem('darkMode');
     if (saved !== null) setDarkMode(JSON.parse(saved));
+
+    let id = localStorage.getItem("deviceId");
+    if (!id) {
+      id = crypto.randomUUID();
+      localStorage.setItem("deviceId", id);
+    }
   }, []);
+
+  const getHeaders = (isJson = false) => {
+    const headers: Record<string, string> = {
+      "X-Device-ID": localStorage.getItem("deviceId") || ""
+    };
+    if (isJson) headers["Content-Type"] = "application/json";
+    return headers;
+  };
 
   const toggleDarkMode = () => {
     setDarkMode((prev) => {
@@ -92,7 +106,7 @@ export default function Home() {
 
   const fetchFiles = async () => {
     try {
-      const res = await fetch("https://file-chatbot.onrender.com/files");
+      const res = await fetch("https://file-chatbot.onrender.com/files", { headers: getHeaders() });
       const data = await res.json();
       setUploadedFiles(data.files);
     } catch (err) {
@@ -102,7 +116,7 @@ export default function Home() {
 
   const fetchSessions = async () => {
     try {
-      const res = await fetch("https://file-chatbot.onrender.com/chats");
+      const res = await fetch("https://file-chatbot.onrender.com/chats", { headers: getHeaders() });
       const data = await res.json();
       setSessions(data.sessions);
       return data.sessions as ChatSession[];
@@ -114,7 +128,7 @@ export default function Home() {
 
   const fetchSessionMessages = async (sessionId: string) => {
     try {
-      const res = await fetch(`https://file-chatbot.onrender.com/chats/${sessionId}/messages`);
+      const res = await fetch(`https://file-chatbot.onrender.com/chats/${sessionId}/messages`, { headers: getHeaders() });
       const data = await res.json();
       setMessages(data.messages);
     } catch (err) {
@@ -124,7 +138,7 @@ export default function Home() {
 
   const handleNewChat = async () => {
     try {
-      const res = await fetch("https://file-chatbot.onrender.com/chats", { method: "POST" });
+      const res = await fetch("https://file-chatbot.onrender.com/chats", { method: "POST", headers: getHeaders() });
       const data = await res.json();
       await fetchSessions();
       setActiveSessionId(data.session_id);
@@ -145,7 +159,7 @@ export default function Home() {
     if (!confirmed) return;
 
     try {
-      await fetch(`https://file-chatbot.onrender.com/chats/${sessionId}`, { method: "DELETE" });
+      await fetch(`https://file-chatbot.onrender.com/chats/${sessionId}`, { method: "DELETE", headers: getHeaders() });
       const updatedSessions = await fetchSessions();
 
       if (activeSessionId === sessionId) {
@@ -164,6 +178,10 @@ export default function Home() {
 
   useEffect(() => {
     const init = async () => {
+      // Ensure deviceId exists before fetching
+      if (!localStorage.getItem("deviceId")) {
+        localStorage.setItem("deviceId", crypto.randomUUID());
+      }
       await fetchFiles();
       const existingSessions = await fetchSessions();
 
@@ -181,7 +199,7 @@ export default function Home() {
   const pollFileStatus = (fileId: string) => {
     const interval = setInterval(async () => {
       try {
-        const res = await fetch(`https://file-chatbot.onrender.com/files/${fileId}/status`);
+        const res = await fetch(`https://file-chatbot.onrender.com/files/${fileId}/status`, { headers: getHeaders() });
         const data = await res.json();
 
         setUploadedFiles((prev) =>
@@ -209,6 +227,7 @@ export default function Home() {
     try {
       const res = await fetch("https://file-chatbot.onrender.com/upload", {
         method: "POST",
+        headers: getHeaders(),
         body: formData,
       });
 
@@ -229,7 +248,7 @@ export default function Home() {
     const confirmed = await showConfirm("Are you sure you want to delete this file?");
     if (!confirmed) return;
     try {
-      await fetch(`https://file-chatbot.onrender.com/files/${fileId}`, { method: "DELETE" });
+      await fetch(`https://file-chatbot.onrender.com/files/${fileId}`, { method: "DELETE", headers: getHeaders() });
       await fetchFiles();
     } catch (err) {
       showToast("Failed to delete the file. Please try again.", 'error');
@@ -263,7 +282,7 @@ export default function Home() {
     try {
       const res = await fetch("https://file-chatbot.onrender.com/chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: getHeaders(true),
         body: JSON.stringify({ session_id: activeSessionId, question: questionText }),
       });
 

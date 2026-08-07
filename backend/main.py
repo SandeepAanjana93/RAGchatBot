@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -276,7 +276,7 @@ def process_file_background(file_id: str, file_bytes: bytes, filename: str):
 
 
 @app.post("/upload")
-async def upload_file(file: UploadFile = File(...), background_tasks: BackgroundTasks = None):
+async def upload_file(file: UploadFile = File(...), background_tasks: BackgroundTasks = None, x_device_id: str = Header(...)):
     file_bytes = await file.read()
     file_size = len(file_bytes)
 
@@ -289,7 +289,8 @@ async def upload_file(file: UploadFile = File(...), background_tasks: Background
         "extracted_text": "",
         "status": "processing",
         "progress": 0,
-        "upload_date": datetime.utcnow()
+        "upload_date": datetime.utcnow(),
+        "device_id": x_device_id
     }
     result = files_collection.insert_one(file_doc)
     file_id = str(result.inserted_id)
@@ -306,8 +307,8 @@ async def upload_file(file: UploadFile = File(...), background_tasks: Background
 
 
 @app.get("/files/{file_id}/status")
-def get_file_status(file_id: str):
-    file_doc = files_collection.find_one({"_id": ObjectId(file_id)})
+def get_file_status(file_id: str, x_device_id: str = Header(...)):
+    file_doc = files_collection.find_one({"_id": ObjectId(file_id), "device_id": x_device_id})
     if not file_doc:
         raise HTTPException(status_code=404, detail="File nahi mili")
     return {
@@ -320,8 +321,8 @@ def get_file_status(file_id: str):
 
 
 @app.get("/files")
-def list_files():
-    files = files_collection.find({}, {"filename": 1, "file_size": 1, "upload_date": 1, "status": 1, "progress": 1})
+def list_files(x_device_id: str = Header(...)):
+    files = files_collection.find({"device_id": x_device_id}, {"filename": 1, "file_size": 1, "upload_date": 1, "status": 1, "progress": 1})
     result = []
     for f in files:
         result.append({
@@ -336,8 +337,8 @@ def list_files():
 
 
 @app.get("/files/{file_id}/download")
-def download_file(file_id: str):
-    file_doc = files_collection.find_one({"_id": ObjectId(file_id)})
+def download_file(file_id: str, x_device_id: str = Header(...)):
+    file_doc = files_collection.find_one({"_id": ObjectId(file_id), "device_id": x_device_id})
     if not file_doc:
         raise HTTPException(status_code=404, detail="File nahi mili")
     grid_file = fs.get(file_doc["gridfs_id"])
@@ -349,8 +350,8 @@ def download_file(file_id: str):
 
 
 @app.delete("/files/{file_id}")
-def delete_file(file_id: str):
-    file_doc = files_collection.find_one({"_id": ObjectId(file_id)})
+def delete_file(file_id: str, x_device_id: str = Header(...)):
+    file_doc = files_collection.find_one({"_id": ObjectId(file_id), "device_id": x_device_id})
     if not file_doc:
         raise HTTPException(status_code=404, detail="File nahi mili")
     fs.delete(file_doc["gridfs_id"])
@@ -360,15 +361,15 @@ def delete_file(file_id: str):
 
 
 @app.post("/chats")
-def create_chat_session():
-    session_doc = {"title": "New Chat", "created_at": datetime.utcnow()}
+def create_chat_session(x_device_id: str = Header(...)):
+    session_doc = {"title": "New Chat", "created_at": datetime.utcnow(), "device_id": x_device_id}
     result = sessions_collection.insert_one(session_doc)
     return {"session_id": str(result.inserted_id), "title": "New Chat"}
 
 
 @app.get("/chats")
-def list_chat_sessions():
-    sessions = sessions_collection.find().sort("created_at", -1)
+def list_chat_sessions(x_device_id: str = Header(...)):
+    sessions = sessions_collection.find({"device_id": x_device_id}).sort("created_at", -1)
     result = []
     for s in sessions:
         result.append({
@@ -380,14 +381,20 @@ def list_chat_sessions():
 
 
 @app.delete("/chats/{session_id}")
-def delete_chat_session(session_id: str):
+def delete_chat_session(session_id: str, x_device_id: str = Header(...)):
+    session_doc = sessions_collection.find_one({"_id": ObjectId(session_id), "device_id": x_device_id})
+    if not session_doc:
+        raise HTTPException(status_code=404, detail="Session not found")
     sessions_collection.delete_one({"_id": ObjectId(session_id)})
     messages_collection.delete_many({"session_id": session_id})
     return {"message": "Chat delete ho gayi"}
 
 
 @app.get("/chats/{session_id}/messages")
-def get_session_messages(session_id: str):
+def get_session_messages(session_id: str, x_device_id: str = Header(...)):
+    session_doc = sessions_collection.find_one({"_id": ObjectId(session_id), "device_id": x_device_id})
+    if not session_doc:
+        raise HTTPException(status_code=404, detail="Session not found")
     messages = messages_collection.find({"session_id": session_id}).sort("timestamp", 1)
     result = []
     for msg in messages:
@@ -401,9 +408,13 @@ class ChatRequest(BaseModel):
 
 
 @app.post("/chat")
-async def chat(request: ChatRequest):
+async def chat(request: ChatRequest, x_device_id: str = Header(...)):
     question = request.question
     session_id = request.session_id
+
+    session_doc = sessions_collection.find_one({"_id": ObjectId(session_id), "device_id": x_device_id})
+    if not session_doc:
+        raise HTTPException(status_code=404, detail="Session not found")
 
     messages_collection.insert_one({
         "session_id": session_id, "sender": "user", "text": question, "timestamp": datetime.utcnow()
