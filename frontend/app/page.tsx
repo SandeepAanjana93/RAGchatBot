@@ -307,14 +307,23 @@ export default function Home() {
   };
 
   return (
-    <div className={`flex h-screen transition-colors duration-300 ${darkMode ? 'bg-[#0D0D14] text-gray-100' : 'bg-[#FAFAFA] text-[#1A1B23]'}`}>
+    <div className={`flex h-screen relative transition-colors duration-300 overflow-hidden ${darkMode ? 'bg-[#0D0D14] text-gray-100' : 'bg-[#FAFAFA] text-[#1A1B23]'}`}>
+
+      {/* Mobile Sidebar Overlay */}
+      {sidebarOpen && (
+        <div 
+          className="md:hidden fixed inset-0 bg-black/40 z-40 backdrop-blur-sm transition-opacity" 
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
 
       {/* Sidebar */}
-      <div className={`${sidebarOpen ? 'w-[300px]' : 'w-0 overflow-hidden'} transition-all duration-300 flex flex-col`}
+      <div className={`${sidebarOpen ? 'w-[280px] md:w-[300px]' : 'w-0'} absolute md:relative z-50 h-full overflow-hidden flex-shrink-0 transition-all duration-300 flex flex-col shadow-2xl md:shadow-none`}
         style={{ background: darkMode ? 'linear-gradient(180deg, #111122 0%, #0A0A12 100%)' : 'linear-gradient(180deg, #1A1B2E 0%, #0F0F1A 100%)' }}>
 
         {/* Logo / Brand */}
-        <div className="flex items-center gap-3 px-5 pt-6 pb-5">
+        <div className="flex items-center justify-between px-5 pt-6 pb-5">
+          <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-2xl flex items-center justify-center font-extrabold text-sm text-white shadow-lg"
             style={{ background: 'linear-gradient(135deg, #E91E8C 0%, #F472B6 100%)', boxShadow: '0 4px 20px rgba(233, 30, 140, 0.35)' }}>
             FC
@@ -323,6 +332,13 @@ export default function Home() {
             <h1 className="text-[15px] font-bold tracking-tight text-white">File Chatbot</h1>
             <p className="text-[10px] text-gray-500 font-medium">AI-Powered Document Chat</p>
           </div>
+          </div>
+          {/* Mobile Close Button */}
+          <button onClick={() => setSidebarOpen(false)} className="md:hidden text-white/50 hover:text-white transition-colors p-1 rounded-lg">
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
         </div>
 
         {/* New Chat Button */}
@@ -433,7 +449,7 @@ export default function Home() {
       </div>
 
       {/* ─── Right Side: Chat Area ─── */}
-      <div className="flex-1 flex flex-col relative">
+      <div className="flex-1 flex flex-col relative min-w-0">
 
         {/* Header */}
         <div className={`border-b px-6 py-3.5 backdrop-blur-md flex items-center justify-between sticky top-0 z-10 ${darkMode ? 'border-white/10 bg-[#14141F]/90' : 'border-[#EBEBEF] bg-white/90'}`}>
