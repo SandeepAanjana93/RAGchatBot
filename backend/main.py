@@ -416,29 +416,30 @@ async def chat(request: ChatRequest, x_device_id: str = Header(...)):
     if not session_doc:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    messages_collection.insert_one({
-        "session_id": session_id, "sender": "user", "text": question, "timestamp": datetime.utcnow()
-    })
-
-    existing_count = messages_collection.count_documents({"session_id": session_id})
-    if existing_count == 1:
-        title = question[:40] + ("..." if len(question) > 40 else "")
-        sessions_collection.update_one({"_id": ObjectId(session_id)}, {"$set": {"title": title}})
-
-    # Query ChromaDB (it will embed automatically)
-    results = collection.query(query_texts=[question], n_results=15)
-
-    relevant_chunks = results["documents"][0] if results["documents"] else []
-    context = "\n\n---\n\n".join(relevant_chunks)
-
-    if not context:
-        answer = "No files have been uploaded or no relevant information was found. Please upload a file first."
+    try:
         messages_collection.insert_one({
-            "session_id": session_id, "sender": "ai", "text": answer, "timestamp": datetime.utcnow()
+            "session_id": session_id, "sender": "user", "text": question, "timestamp": datetime.utcnow()
         })
-        return {"answer": answer}
 
-    prompt = f"""You are a document assistant. The "Context" provided below is your ONLY source of knowledge.
+        existing_count = messages_collection.count_documents({"session_id": session_id})
+        if existing_count == 1:
+            title = question[:40] + ("..." if len(question) > 40 else "")
+            sessions_collection.update_one({"_id": ObjectId(session_id)}, {"$set": {"title": title}})
+
+        # Query ChromaDB (it will embed automatically)
+        results = collection.query(query_texts=[question], n_results=15)
+
+        relevant_chunks = results["documents"][0] if results["documents"] else []
+        context = "\n\n---\n\n".join(relevant_chunks)
+
+        if not context:
+            answer = "No files have been uploaded or no relevant information was found. Please upload a file first."
+            messages_collection.insert_one({
+                "session_id": session_id, "sender": "ai", "text": answer, "timestamp": datetime.utcnow()
+            })
+            return {"answer": answer}
+
+        prompt = f"""You are a document assistant. The "Context" provided below is your ONLY source of knowledge.
 
 STRICT RULES:
 1. Answer ONLY based on what is written in the "Context" below.
@@ -452,16 +453,15 @@ Context:
 Question: {question}
 
 Answer:"""
-    headers = {"Authorization": f"Bearer {MODAL_API_KEY}", "Content-Type": "application/json"}
-    payload = {
-        "model": "moonshotai/Kimi-K3",
-        "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 1024,
-        "temperature": 0.2,
-        "stream": False
-    }
+        headers = {"Authorization": f"Bearer {MODAL_API_KEY}", "Content-Type": "application/json"}
+        payload = {
+            "model": "moonshotai/Kimi-K3",
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": 1024,
+            "temperature": 0.2,
+            "stream": False
+        }
 
-    try:
         response = requests.post(MODAL_URL, headers=headers, json=payload, timeout=30)
         result = response.json()
 
@@ -476,7 +476,7 @@ Answer:"""
         return {"answer": answer}
 
     except Exception as e:
-        error_msg = f"Error: {str(e)}"
+        error_msg = f"System Error: {str(e)}"
         messages_collection.insert_one({
             "session_id": session_id, "sender": "ai", "text": error_msg, "timestamp": datetime.utcnow()
         })
