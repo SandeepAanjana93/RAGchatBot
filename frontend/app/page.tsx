@@ -92,7 +92,7 @@ export default function Home() {
 
   const fetchFiles = async () => {
     try {
-      const res = await fetch("http://localhost:8000/files");
+      const res = await fetch("https://file-chatbot.onrender.com/files");
       const data = await res.json();
       setUploadedFiles(data.files);
     } catch (err) {
@@ -102,7 +102,7 @@ export default function Home() {
 
   const fetchSessions = async () => {
     try {
-      const res = await fetch("http://localhost:8000/chats");
+      const res = await fetch("https://file-chatbot.onrender.com/chats");
       const data = await res.json();
       setSessions(data.sessions);
       return data.sessions as ChatSession[];
@@ -114,7 +114,7 @@ export default function Home() {
 
   const fetchSessionMessages = async (sessionId: string) => {
     try {
-      const res = await fetch(`http://localhost:8000/chats/${sessionId}/messages`);
+      const res = await fetch(`https://file-chatbot.onrender.com/chats/${sessionId}/messages`);
       const data = await res.json();
       setMessages(data.messages);
     } catch (err) {
@@ -124,7 +124,7 @@ export default function Home() {
 
   const handleNewChat = async () => {
     try {
-      const res = await fetch("http://localhost:8000/chats", { method: "POST" });
+      const res = await fetch("https://file-chatbot.onrender.com/chats", { method: "POST" });
       const data = await res.json();
       await fetchSessions();
       setActiveSessionId(data.session_id);
@@ -145,7 +145,7 @@ export default function Home() {
     if (!confirmed) return;
 
     try {
-      await fetch(`http://localhost:8000/chats/${sessionId}`, { method: "DELETE" });
+      await fetch(`https://file-chatbot.onrender.com/chats/${sessionId}`, { method: "DELETE" });
       const updatedSessions = await fetchSessions();
 
       if (activeSessionId === sessionId) {
@@ -181,7 +181,7 @@ export default function Home() {
   const pollFileStatus = (fileId: string) => {
     const interval = setInterval(async () => {
       try {
-        const res = await fetch(`http://localhost:8000/files/${fileId}/status`);
+        const res = await fetch(`https://file-chatbot.onrender.com/files/${fileId}/status`);
         const data = await res.json();
 
         setUploadedFiles((prev) =>
@@ -207,7 +207,7 @@ export default function Home() {
     formData.append("file", file);
 
     try {
-      const res = await fetch("http://localhost:8000/upload", {
+      const res = await fetch("https://file-chatbot.onrender.com/upload", {
         method: "POST",
         body: formData,
       });
@@ -229,7 +229,7 @@ export default function Home() {
     const confirmed = await showConfirm("Are you sure you want to delete this file?");
     if (!confirmed) return;
     try {
-      await fetch(`http://localhost:8000/files/${fileId}`, { method: "DELETE" });
+      await fetch(`https://file-chatbot.onrender.com/files/${fileId}`, { method: "DELETE" });
       await fetchFiles();
     } catch (err) {
       showToast("Failed to delete the file. Please try again.", 'error');
@@ -261,7 +261,7 @@ export default function Home() {
     setThinking(true);
 
     try {
-      const res = await fetch("http://localhost:8000/chat", {
+      const res = await fetch("https://file-chatbot.onrender.com/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ session_id: activeSessionId, question: questionText }),
