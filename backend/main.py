@@ -22,10 +22,19 @@ from dotenv import load_dotenv
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import pytesseract
 
-load_dotenv()
+import os
+import platform
 
-POPPLER_PATH = r"C:\Users\Dell\Desktop\intern\python_projects\RAGchatbot\poppler-26.02.0\Library\bin"  # apna actual path
-pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"  # apna actual path
+load_dotenv(override=True)
+
+# OS Check for Deployment
+if os.name == 'nt':
+    # Local Windows Paths
+    POPPLER_PATH = r"C:\Users\Dell\Desktop\intern\python_projects\RAGchatbot\poppler-26.02.0\Library\bin"
+    pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+else:
+    # Linux / Server Deployment Paths (detected automatically via system PATH)
+    POPPLER_PATH = None
 
 app = FastAPI()
 
@@ -48,8 +57,8 @@ embedder = SentenceTransformer("all-MiniLM-L6-v2")
 chroma_client = chromadb.PersistentClient(path="chroma_db")
 collection = chroma_client.get_or_create_collection(name="documents")
 
-NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY")
-NVIDIA_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
+MODAL_API_KEY = os.getenv("MODAL_API_KEY")
+MODAL_URL = "https://sandeep67patel--ep-kimi-k3-server.us-west.modal.direct/v1/chat/completions"
 
 
 def table_to_text(table) -> str:
@@ -118,7 +127,7 @@ def extract_text_from_pdf(file_bytes: bytes, progress_callback=None) -> str:
         total_pages = len(pdf.pages)
         page_area_cache = {}
 
-        # Step 1: Pehle decide karo kaunse pages ko OCR chahiye (fast, sequential)
+        # Step 1: First decide which pages need OCR (fast, sequential)
         needs_ocr_flags = []
         page_image_boxes = []
         for page in pdf.pages:
@@ -145,10 +154,14 @@ def extract_text_from_pdf(file_bytes: bytes, progress_callback=None) -> str:
             page_image_boxes.append(boxes)
             page_data.append((page_text, table_text))
 
-        # Step 2: Sirf jinko OCR chahiye, unhi pages ko images me convert karo
+        # Step 2: Convert only the pages that need OCR into images
         ocr_images_map = {}
         if any(needs_ocr_flags):
-            all_images = convert_from_bytes(file_bytes, poppler_path=POPPLER_PATH, dpi=150)
+            # Pass poppler_path only if it's set (Windows), else let it use system PATH (Linux)
+            if POPPLER_PATH:
+                all_images = convert_from_bytes(file_bytes, poppler_path=POPPLER_PATH, dpi=150)
+            else:
+                all_images = convert_from_bytes(file_bytes, dpi=150)
             for i, needs in enumerate(needs_ocr_flags):
                 if needs and i < len(all_images):
                     ocr_images_map[i] = all_images[i]
@@ -225,7 +238,7 @@ def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50):
 
 @app.get("/")
 def read_root():
-    return {"message": "Backend chal raha hai 🚀"}
+    return {"message": "Backend is running 🚀"}
 
 
 def process_file_background(file_id: str, file_bytes: bytes, filename: str):
@@ -408,19 +421,19 @@ async def chat(request: ChatRequest):
     context = "\n\n---\n\n".join(relevant_chunks)
 
     if not context:
-        answer = "Koi file upload nahi hui hai ya relevant information nahi mili. Pehle file upload karo."
+        answer = "No files have been uploaded or no relevant information was found. Please upload a file first."
         messages_collection.insert_one({
             "session_id": session_id, "sender": "ai", "text": answer, "timestamp": datetime.utcnow()
         })
         return {"answer": answer}
 
-    prompt = f"""Tum ek document assistant ho. Neeche diya gaya "Context" hi tumhara sirf ek knowledge source hai.
+    prompt = f"""You are a document assistant. The "Context" provided below is your ONLY source of knowledge.
 
-SAKHT NIYAM:
-1. Sirf "Context" me jo likha hai, sirf usi ke base par answer do.
-2. Apne bahar ke general knowledge ka use bilkul mat karo.
-3. Agar user code, security, password, ya encryption ke baare me pooche, to context me dhyan se code snippet (jaise 'def', 'hashlib', 'pbkdf2', 'salt') dhoondh kar EXACTLY waise hi copy-paste karke do! Explain mat karo, sirf code do.
-4. Agar Context me answer bilkul nahi mil raha, to saaf likho: "Ye jaankari uploaded file me nahi mili."
+STRICT RULES:
+1. Answer ONLY based on what is written in the "Context" below.
+2. Do NOT use any outside or general knowledge.
+3. If the user asks about code, security, passwords, or encryption, carefully look for code snippets (like 'def', 'hashlib', 'pbkdf2', 'salt') in the context and provide them EXACTLY as they appear. Do not explain, just give the code.
+4. If the answer is not found in the Context, clearly state: "This information was not found in the uploaded file."
 
 Context:
 {context}
@@ -428,10 +441,9 @@ Context:
 Question: {question}
 
 Answer:"""
-
-    headers = {"Authorization": f"Bearer {NVIDIA_API_KEY}", "Content-Type": "application/json"}
+    headers = {"Authorization": f"Bearer {MODAL_API_KEY}", "Content-Type": "application/json"}
     payload = {
-        "model": "meta/llama-3.1-8b-instruct",
+        "model": "moonshotai/Kimi-K3",
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": 1024,
         "temperature": 0.2,
@@ -439,7 +451,7 @@ Answer:"""
     }
 
     try:
-        response = requests.post(NVIDIA_URL, headers=headers, json=payload, timeout=30)
+        response = requests.post(MODAL_URL, headers=headers, json=payload, timeout=30)
         result = response.json()
 
         if "choices" not in result:

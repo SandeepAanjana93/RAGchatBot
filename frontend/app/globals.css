@@ -3,6 +3,17 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+  --accent: #E91E8C;
+  --accent-light: #F472B6;
+  --accent-gradient: linear-gradient(135deg, #E91E8C 0%, #F472B6 100%);
+  --accent-bg: rgba(233, 30, 140, 0.08);
+  --surface: #FAFAFA;
+  --surface-hover: #F3F3F5;
+  --border: #EBEBEF;
+  --text-primary: #1A1B23;
+  --text-secondary: #6B7280;
+  --text-muted: #9CA3AF;
+  --sidebar-bg: linear-gradient(180deg, #1A1B2E 0%, #0F0F1A 100%);
 }
 
 @theme inline {
@@ -10,11 +21,16 @@
   --color-foreground: var(--foreground);
 }
 
+* {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
 body {
   background: var(--background);
   color: var(--foreground);
 }
 
+/* Thinking dots animation */
 @keyframes bounce-dot {
   0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
   30% { transform: translateY(-6px); opacity: 1; }
@@ -26,15 +42,89 @@ body {
 .dot:nth-child(2) { animation-delay: 0.15s; }
 .dot:nth-child(3) { animation-delay: 0.3s; }
 
+/* Message entry animation */
 @keyframes fade-in-up {
-  from { opacity: 0; transform: translateY(8px); }
+  from { opacity: 0; transform: translateY(12px); }
   to { opacity: 1; transform: translateY(0); }
 }
 .msg-animate {
-  animation: fade-in-up 0.25s ease-out;
+  animation: fade-in-up 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-::-webkit-scrollbar { width: 6px; }
+/* Pulse glow for AI avatar */
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(233, 30, 140, 0.3); }
+  50% { box-shadow: 0 0 12px 4px rgba(233, 30, 140, 0.15); }
+}
+.ai-avatar-glow {
+  animation: pulse-glow 2.5s ease-in-out infinite;
+}
+
+/* Upload drop zone pulse */
+@keyframes drop-pulse {
+  0%, 100% { border-color: rgba(233, 30, 140, 0.3); }
+  50% { border-color: rgba(233, 30, 140, 0.7); }
+}
+.drop-active {
+  animation: drop-pulse 1s ease-in-out infinite;
+  background: rgba(233, 30, 140, 0.06) !important;
+}
+
+/* Typing indicator shimmer */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.thinking-shimmer {
+  background: linear-gradient(90deg, #f0f0f0 25%, #e8e8e8 50%, #f0f0f0 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+
+/* Copied toast */
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(4px) scale(0.95); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.toast-animate {
+  animation: toast-in 0.2s ease-out;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar { width: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 10px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.25); }
+::-webkit-scrollbar-thumb { background: rgba(155, 155, 175, 0.2); border-radius: 10px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(155, 155, 175, 0.35); }
+
+/* Sidebar scrollbar */
+.sidebar-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); }
+.sidebar-scroll::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+
+/* Send button ripple */
+@keyframes ripple-out {
+  0% { box-shadow: 0 0 0 0 rgba(233, 30, 140, 0.4); }
+  100% { box-shadow: 0 0 0 12px rgba(233, 30, 140, 0); }
+}
+.send-ripple:active {
+  animation: ripple-out 0.4s ease-out;
+}
+
+/* Hover lift */
+.hover-lift {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.hover-lift:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.06);
+}
+
+/* Progress bar animation */
+@keyframes progress-shine {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.progress-bar {
+  background: linear-gradient(90deg, #E91E8C, #F472B6, #E91E8C);
+  background-size: 200% 100%;
+  animation: progress-shine 2s linear infinite;
+}
