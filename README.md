@@ -18,8 +18,6 @@
 
 ## 📸 Screenshots
 
-*(You can add your screenshots here by replacing the placeholder links!)*
-
 <div align="center">
   <img src="output/chat.png" alt="Desktop Interface" width="80%">
   <br>
