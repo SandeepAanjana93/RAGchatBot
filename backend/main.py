@@ -240,7 +240,7 @@ def read_root():
     return {"message": "Backend is running 🚀"}
 
 
-def process_file_background(file_id: str, file_bytes: bytes, filename: str):
+def process_file_background(file_id: str, file_bytes: bytes, filename: str, device_id: str):
     def update_progress(percent):
         files_collection.update_one(
             {"_id": ObjectId(file_id)},
@@ -253,7 +253,7 @@ def process_file_background(file_id: str, file_bytes: bytes, filename: str):
 
         if chunks:
             ids = [f"{file_id}_chunk_{i}" for i in range(len(chunks))]
-            metadatas = [{"filename": filename, "file_id": file_id, "chunk_index": i} for i in range(len(chunks))]
+            metadatas = [{"filename": filename, "file_id": file_id, "chunk_index": i, "device_id": device_id} for i in range(len(chunks))]
             # Using ChromaDB's default embedding function to save RAM
             collection.add(documents=chunks, ids=ids, metadatas=metadatas)
 
@@ -294,7 +294,7 @@ async def upload_file(file: UploadFile = File(...), background_tasks: Background
     result = files_collection.insert_one(file_doc)
     file_id = str(result.inserted_id)
 
-    background_tasks.add_task(process_file_background, file_id, file_bytes, file.filename)
+    background_tasks.add_task(process_file_background, file_id, file_bytes, file.filename, x_device_id)
 
     return {
         "file_id": file_id,
@@ -425,8 +425,8 @@ async def chat(request: ChatRequest, x_device_id: str = Header(...)):
             title = question[:40] + ("..." if len(question) > 40 else "")
             sessions_collection.update_one({"_id": ObjectId(session_id)}, {"$set": {"title": title}})
 
-        # Query ChromaDB (it will embed automatically)
-        results = collection.query(query_texts=[question], n_results=15)
+        # Query ChromaDB (it will embed automatically) with device_id filter
+        results = collection.query(query_texts=[question], n_results=15, where={"device_id": x_device_id})
 
         relevant_chunks = results["documents"][0] if results["documents"] else []
         context = "\n\n---\n\n".join(relevant_chunks)
