@@ -1,95 +1,134 @@
-# File Chatbot — AI Document Assistant
+<div align="center">
+  <h1>🚀 RAG File Chatbot</h1>
+  <p>An intelligent document assistant powered by Retrieval-Augmented Generation (RAG). Upload your PDFs, Word documents, and Images, and chat with them in real-time!</p>
+</div>
 
-A full-stack Retrieval-Augmented Generation (RAG) application that allows users to upload documents (PDF, DOCX, TXT) and chat with an AI assistant to extract insights, code, and answers strictly based on the uploaded files. 
+---
 
-The AI is powered by **Moonshot Kimi-K3** (via Modal backend) capable of handling a 1 million token context window.
+## 🌟 Key Features
 
-## 🚀 Features
+* **Multi-Format Support:** Upload `.pdf`, `.docx`, `.txt`, and images (`.jpg`, `.png`).
+* **Intelligent Chat (RAG):** AI answers your questions *strictly* based on the uploaded context.
+* **Privacy & Device Isolation:** Every user gets a unique, anonymous "Device ID". You only see and chat with files you uploaded from your own device.
+* **Smart OCR:** Automatically extracts text from images and scanned PDFs using Tesseract OCR.
+* **Fast & Free AI:** Powered by **Google Gemini 3.5 Flash** for blazing-fast inference.
+* **Responsive UI:** Beautiful, dark-mode enabled modern interface that works perfectly on Mobile and Desktop.
 
-- **Document Parsing & OCR**: Automatically extracts text from PDFs, Word docs, and TXT files. Uses `pytesseract` and `poppler` to perform OCR on scanned PDFs or image-based pages.
-- **Vector Database**: Uses ChromaDB to store text embeddings for semantic search and fast retrieval.
-- **File Storage**: Uses MongoDB GridFS to store uploaded files and conversation histories.
-- **Premium UI**: Built with Next.js, featuring a modern dark/light mode toggle, glassmorphism UI, toast notifications, and smooth micro-animations.
-- **Strict Context Responses**: The AI is strictly instructed to only answer from the uploaded context and provide code snippets exactly as written without hallucinating outside knowledge.
+---
+
+## 📸 Screenshots
+
+*(You can add your screenshots here by replacing the placeholder links!)*
+
+<div align="center">
+  <img src="output/chat.png" alt="Desktop Interface" width="80%">
+  <br>
+  <em>Desktop View: Uploading and Chatting with Documents</em>
+</div>
+
+<br>
+
+<div align="center">
+  <img src="output/mobile.png" alt="Mobile Interface" width="30%">
+  <br>
+  <em>Responsive Mobile View with Swipe Sidebar</em>
+</div>
+
+---
 
 ## 🛠️ Tech Stack
 
-**Backend:**
-- Python, FastAPI
-- ChromaDB (Local Vector DB)
-- MongoDB & GridFS (NoSQL Database)
-- PyMuPDF, pdf2image, pytesseract, docx (Document Parsing & OCR)
-- Sentence Transformers (Embeddings)
-- Modal (Remote execution for LLM inference)
+### Frontend
+* **Framework:** Next.js (React)
+* **Styling:** Tailwind CSS
+* **Hosting:** Vercel
 
-**Frontend:**
-- Next.js (React)
-- Tailwind CSS
-- Inter Font (Google Fonts)
+### Backend
+* **Framework:** FastAPI (Python)
+* **Vector Database:** ChromaDB (for fast semantic search)
+* **Primary Database:** MongoDB & GridFS (for file metadata and raw file storage)
+* **AI Provider:** Google Gemini API
+* **Hosting:** Render.com
 
-## 📦 Local Setup (Windows)
+---
 
-### Prerequisites
-1. **Python 3.9+**
-2. **Node.js 18+**
-3. **MongoDB**: Have a local or Atlas MongoDB URI.
-4. **Tesseract OCR**: Install Tesseract and ensure the path is set correctly in `backend/main.py`.
-5. **Poppler**: Poppler binaries are included in the repository for Windows users.
+## 🏗️ Architecture
 
-### 1. Clone the repository
+1. **Upload:** User uploads a document via the Next.js frontend.
+2. **Process:** FastAPI receives the file, stores it in MongoDB GridFS, and runs a background task.
+3. **Extract & Chunk:** The background task extracts text (using `pdfplumber`, `docx`, or `pytesseract`) and splits it into manageable chunks.
+4. **Embed:** Chunks are converted into vector embeddings and stored in ChromaDB (tagged with the user's `Device ID`).
+5. **Chat:** When a user asks a question, ChromaDB finds the most relevant chunks. These chunks are sent to the Gemini AI along with the question to generate a highly accurate, context-aware answer.
+
+---
+
+## 🚀 Live Demo & Deployment
+
+The project is already live! You don't need to install anything to use it.
+
+* **Frontend (Vercel):** [Replace with your Vercel URL]
+* **Backend API (Render):** `https://file-chatbot.onrender.com`
+
+---
+
+## 💻 Local Development (For Developers)
+
+If you want to run or modify this project on your own computer, follow these steps:
+* Python 3.10+
+* Node.js 18+
+* MongoDB (Local or Atlas)
+* A free Gemini API Key (from Google AI Studio)
+
+### 1. Backend Setup
+
 ```bash
-git clone https://github.com/SandeepAanjana93/RAGchatBot.git
-cd RAGchatBot
-```
-
-### 2. Backend Setup
-Activate the virtual environment and install dependencies:
-```powershell
-# Activate venv
-.\chatbot\Scripts\activate
-
-# Install dependencies
+cd backend
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-Create a `.env` file in the root directory:
+**Environment Variables (`backend/.env`):**
 ```env
 MONGO_URI=mongodb://localhost:27017/
-MODAL_API_KEY=wk-your-workspace-token
+GEMINI_API_KEY=your_google_gemini_api_key_here
 ```
 
-Start the FastAPI server:
-```powershell
-cd backend
+**Run the Server:**
+```bash
 uvicorn main:app --reload
 ```
+*Backend will run on `http://localhost:8000`*
 
-### 3. Frontend Setup
-Open a new terminal and install Node dependencies:
-```powershell
+### 2. Frontend Setup
+
+```bash
 cd frontend
 npm install
 ```
 
-Start the Next.js development server:
-```powershell
+**Run the Client:**
+```bash
 npm run dev
 ```
+*Frontend will run on `http://localhost:3000`*
 
-The app will be available at [http://localhost:3000](http://localhost:3000).
+---
 
-## ☁️ Deployment (Linux / Cloud)
+## 🔌 API Endpoints
 
-When deploying to a cloud provider like Render, Railway, or Heroku, the backend automatically detects the Linux OS and stops using the local Windows binaries for Poppler and Tesseract.
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| `POST` | `/upload` | Upload a file and start background processing |
+| `GET` | `/files` | List all files uploaded by the current device |
+| `GET` | `/files/{id}/status`| Check processing progress of a file |
+| `DELETE`| `/files/{id}` | Delete a file from GridFS and ChromaDB |
+| `POST` | `/chats` | Create a new chat session |
+| `GET` | `/chats` | Get all chat sessions for the current device |
+| `POST` | `/chat` | Send a message to the AI and get a response |
+| `GET` | `/clear-all-data` | **Admin:** Wipes the entire database to start fresh |
 
-### Server Requirements
-You must install `poppler-utils` and `tesseract-ocr` on your host machine. 
-For example, in a Dockerfile or using apt:
-```bash
-apt-get update && apt-get install -y poppler-utils tesseract-ocr
-```
+---
 
-### Starting the Server in Production
-```bash
-uvicorn main:app --host 0.0.0.0 --port 8000
-```
+## 🔒 Security & Privacy
+This project does NOT require user authentication (login/passwords). Instead, it uses **Anonymous Device IDs** generated via `crypto.randomUUID()` and stored in the browser's `localStorage`. This ensures zero-friction onboarding while keeping user data strictly isolated from others.

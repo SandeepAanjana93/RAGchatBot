@@ -620,9 +620,13 @@ export default function Home() {
 
         {/* Input Area */}
         <div className="px-6 pb-5 pt-2">
-          <div className={`max-w-3xl w-full mx-auto flex items-center gap-3 rounded-2xl px-4 py-2 shadow-sm focus-within:border-[#E91E8C]/50 focus-within:shadow-[0_0_0_4px_rgba(233,30,140,0.08)] transition-all ${darkMode ? 'bg-[#1E1E2E] border border-white/10' : 'bg-white border border-[#EBEBEF]'}`}>
+          <form 
+            onSubmit={(e) => { e.preventDefault(); handleSend(); }}
+            className={`max-w-3xl w-full mx-auto flex items-center gap-3 rounded-2xl px-4 py-2 shadow-sm focus-within:border-[#E91E8C]/50 focus-within:shadow-[0_0_0_4px_rgba(233,30,140,0.08)] transition-all ${darkMode ? 'bg-[#1E1E2E] border border-white/10' : 'bg-white border border-[#EBEBEF]'}`}
+          >
             {/* Attach Button */}
             <button
+              type="button"
               onClick={() => fileInputRef.current?.click()}
               className="p-2 text-gray-400 hover:text-[#E91E8C] hover:bg-[#E91E8C]/5 rounded-xl transition-all"
               title="Attach file"
@@ -639,14 +643,13 @@ export default function Home() {
               id="chatMessage"
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleSend()}
               placeholder="Type a message..."
               className={`flex-1 bg-transparent outline-none text-sm py-2 placeholder:text-gray-400 font-medium ${darkMode ? 'text-white' : 'text-[#1A1B23]'}`}
             />
 
             {/* Send Button */}
             <button
-              onClick={handleSend}
+              type="submit"
               disabled={thinking || !input.trim()}
               className="send-ripple text-white text-sm font-semibold w-10 h-10 rounded-xl flex items-center justify-center transition-all disabled:opacity-20 disabled:shadow-none active:scale-90"
               style={{
@@ -658,7 +661,7 @@ export default function Home() {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h14M12 5l7 7-7 7" />
               </svg>
             </button>
-          </div>
+          </form>
           <p className="text-center text-[10px] text-gray-400 mt-2.5">
             AI responses are based on your uploaded documents only
           </p>
