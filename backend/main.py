@@ -240,6 +240,26 @@ def read_root():
     return {"message": "Backend is running 🚀"}
 
 
+@app.get("/clear-all-data")
+def clear_all_data():
+    global collection
+    # Clear MongoDB Collections
+    db.drop_collection("files_metadata")
+    db.drop_collection("chat_sessions")
+    db.drop_collection("chat_messages")
+    db.drop_collection("fs.files")
+    db.drop_collection("fs.chunks")
+    
+    # Clear ChromaDB
+    try:
+        chroma_client.delete_collection(name="documents")
+    except Exception:
+        pass
+    collection = chroma_client.get_or_create_collection(name="documents")
+    
+    return {"message": "All data (Files, Chats, ChromaDB) has been completely wiped. You can now start fresh."}
+
+
 def process_file_background(file_id: str, file_bytes: bytes, filename: str, device_id: str):
     def update_progress(percent):
         files_collection.update_one(
