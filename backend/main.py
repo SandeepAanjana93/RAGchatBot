@@ -57,8 +57,7 @@ messages_collection = db["chat_messages"]
 chroma_client = chromadb.PersistentClient(path="chroma_db")
 collection = chroma_client.get_or_create_collection(name="documents")
 
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+GEMINI_API_KEY = os.getenv("GROQ_API_KEY") or os.getenv("GEMINI_API_KEY")
 
 
 def table_to_text(table) -> str:
@@ -453,22 +452,21 @@ Context:
 Question: {question}
 
 Answer:"""
-        headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
+        headers = {"Content-Type": "application/json"}
         payload = {
-            "model": "llama3-70b-8192",
-            "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": 1024,
-            "temperature": 0.2,
-            "stream": False
+            "contents": [{
+                "parts": [{"text": prompt}]
+            }]
         }
 
-        response = requests.post(GROQ_URL, headers=headers, json=payload, timeout=30)
+        gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key={GEMINI_API_KEY}"
+        response = requests.post(gemini_url, headers=headers, json=payload, timeout=30)
         result = response.json()
 
-        if "choices" not in result:
+        if "candidates" not in result:
             answer = f"AI se error aaya: {result}"
         else:
-            answer = result["choices"][0]["message"]["content"]
+            answer = result["candidates"][0]["content"]["parts"][0]["text"]
 
         messages_collection.insert_one({
             "session_id": session_id, "sender": "ai", "text": answer, "timestamp": datetime.utcnow()
