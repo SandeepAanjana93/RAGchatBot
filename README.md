@@ -1,132 +1,154 @@
-<div align="center">
-  <h1>🚀 RAG File Chatbot</h1>
-  <p>An intelligent document assistant powered by Retrieval-Augmented Generation (RAG). Upload your PDFs, Word documents, and Images, and chat with them in real-time!</p>
-</div>
+# File Chatbot
 
----
+Upload a document, ask it questions, get answers grounded in what's actually written inside it — no hallucinated facts, no generic AI knowledge pretending to be your file.
 
-## 🌟 Key Features
+This started as a simple "upload a PDF and chat with it" idea and slowly turned into a full RAG (Retrieval-Augmented Generation) pipeline with OCR support for scanned pages and code screenshots, multi-session chat history, and per-device data isolation so multiple people can use the same deployed instance without seeing each other's files.
 
-* **Multi-Format Support:** Upload `.pdf`, `.docx`, `.txt`, and images (`.jpg`, `.png`).
-* **Intelligent Chat (RAG):** AI answers your questions *strictly* based on the uploaded context.
-* **Privacy & Device Isolation:** Every user gets a unique, anonymous "Device ID". You only see and chat with files you uploaded from your own device.
-* **Smart OCR:** Automatically extracts text from images and scanned PDFs using Tesseract OCR.
-* **Fast & Free AI:** Powered by **Google Gemini 3.5 Flash** for blazing-fast inference.
-* **Responsive UI:** Beautiful, dark-mode enabled modern interface that works perfectly on Mobile and Desktop.
+**Live demo:** *(https://file-chatbot-omega.vercel.app/)*
 
----
+![Dashboard interface](output/chat.png)
+![Mobile interface](output/mobile.png)
 
-## 📸 Screenshots
+## Why I built this
 
-<div align="center">
-  <img src="output/chat.png" alt="Desktop Interface" width="80%">
-  <br>
-  <em>Desktop View: Uploading and Chatting with Documents</em>
-</div>
+Most "chat with your PDF" tutorials only handle clean, text-based PDFs. The moment you throw a real-world document at them — a scanned report, a project file with code embedded as screenshots, a table-heavy spreadsheet export — they either extract garbage or nothing at all. I wanted something that could actually survive contact with messy files, so a chunk of the effort here went into the extraction layer rather than just wiring an LLM to a vector store.
 
-<br>
+## What it does
 
-<div align="center">
-  <img src="output/mobile.png" alt="Mobile Interface" width="30%">
-  <br>
-  <em>Responsive Mobile View with Swipe Sidebar</em>
-</div>
+- **Upload documents** — PDF, DOCX, TXT, JPG, PNG
+- **Smart text extraction** — pulls real text where it exists, and automatically falls back to OCR (Tesseract) for scanned pages or embedded images/code screenshots, without OCR-ing pages that don't need it
+- **Table extraction** — tables in PDFs and DOCX files are parsed and kept in a readable row/column format instead of turning into a wall of jumbled text
+- **Chat with your files** — ask questions and get answers pulled from the document's actual content, with the model explicitly told not to answer from its own general knowledge
+- **Multiple chats, like a real chat app** — start new conversations, switch between them, each with its own history and auto-generated title
+- **Background processing with live progress** — large files don't block the upload; you get a progress percentage while OCR runs in the background
+- **Per-device data isolation** — no login system, but each browser gets a device ID so uploads and chats stay private to that device
+- **Dark mode, mobile-responsive layout, copy-to-clipboard on answers** — the small stuff that makes it feel like a finished product instead of a prototype
 
----
+## How it works
 
-## 🛠️ Tech Stack
+```
+ Upload                          Ask a question
+   │                                   │
+   ▼                                   ▼
+Extract text ──► Chunk ──► Embed   Embed the question
+(pdfplumber +      │          │         │
+ OCR fallback)     │          ▼         ▼
+   │               │      ChromaDB ◄── similarity search
+   ▼               │      (vector store)
+Store raw file     │          │
+in MongoDB         │          ▼
+(GridFS)           │    Top matching chunks
+   │               │          │
+   ▼               ▼          ▼
+Save metadata   Save chunk   Build prompt (context + question)
++ progress %    embeddings         │
+                                   ▼
+                            Gemini 3.5 Flash
+                                   │
+                                   ▼
+                         Answer, grounded in the file
+                        (chat history saved to MongoDB)
+```
 
-### Frontend
-* **Framework:** Next.js (React)
-* **Styling:** Tailwind CSS
-* **Hosting:** Vercel
+The short version: nothing gets "trained." Every uploaded file is broken into overlapping chunks, embedded, and stored in a vector database. When you ask a question, the app finds the chunks most relevant to that question and hands them to the LLM as context, along with a strict instruction to answer only from that context. This is the standard RAG pattern — the same idea behind tools like NotebookLM — just built from scratch here.
+
+### The extraction pipeline, in a bit more detail
+
+This is the part that took the most iteration:
+
+1. Each PDF page is checked with `pdfplumber` first — if there's a real text layer, it's extracted directly, and any tables on that page are pulled out separately.
+2. Every page is also scanned for embedded images above a certain size threshold. If a page has a large image (a code screenshot, a diagram, a scanned block of text) or has effectively no extractable text, that page is queued for OCR.
+3. Only the pages that actually need it get converted to images and run through Tesseract — this keeps processing fast instead of OCR-ing every single page of a 60-page report just because it has a small logo on it.
+4. Where possible, OCR runs on the cropped image region itself rather than the whole page, which noticeably improves accuracy on code screenshots.
+5. All of this happens in a background task with a progress callback, so the frontend can show a live percentage instead of a frozen "uploading" spinner.
+
+## Tech stack
+
+**Backend**
+- FastAPI (Python)
+- MongoDB + GridFS — stores the original files and chat/session metadata
+- ChromaDB — vector store for embeddings and similarity search
+- pdfplumber, python-docx, Tesseract OCR, pdf2image, OpenCV — the extraction layer
+- Google Gemini API — generates the actual answers
+
+**Frontend**
+- Next.js (App Router) + TypeScript
+- Tailwind CSS
+- No auth system — device-based session identity via `localStorage` + a UUID sent as a header on every request
+
+**Deployment**
+- Backend: Docker container on Render (Dockerfile installs `poppler-utils` and `tesseract-ocr` since these aren't available on the default Python image)
+- Frontend: Vercel
+
+## Project structure
+
+```
+RAGchatbot/
+├── backend/
+│   └── main.py              # FastAPI app — upload, OCR, chat, sessions, all of it
+├── frontend/
+│   └── app/
+│       ├── page.tsx         # The whole UI — upload sidebar, chat window, dark mode
+│       └── layout.tsx
+├── Dockerfile                # Backend image w/ poppler + tesseract installed
+├── requirements.txt
+└── output/                   # Screenshots used in this README
+```
+
+## Running it locally
 
 ### Backend
-* **Framework:** FastAPI (Python)
-* **Vector Database:** ChromaDB (for fast semantic search)
-* **Primary Database:** MongoDB & GridFS (for file metadata and raw file storage)
-* **AI Provider:** Google Gemini API
-* **Hosting:** Render.com
-
----
-
-## 🏗️ Architecture
-
-1. **Upload:** User uploads a document via the Next.js frontend.
-2. **Process:** FastAPI receives the file, stores it in MongoDB GridFS, and runs a background task.
-3. **Extract & Chunk:** The background task extracts text (using `pdfplumber`, `docx`, or `pytesseract`) and splits it into manageable chunks.
-4. **Embed:** Chunks are converted into vector embeddings and stored in ChromaDB (tagged with the user's `Device ID`).
-5. **Chat:** When a user asks a question, ChromaDB finds the most relevant chunks. These chunks are sent to the Gemini AI along with the question to generate a highly accurate, context-aware answer.
-
----
-
-## 🚀 Live Demo & Deployment
-
-The project is already live! You don't need to install anything to use it.
-
-* **Frontend (Vercel):** [Replace with your Vercel URL]
-* **Backend API (Render):** `https://file-chatbot.onrender.com`
-
----
-
-## 💻 Local Development (For Developers)
-
-If you want to run or modify this project on your own computer, follow these steps:
-* Python 3.10+
-* Node.js 18+
-* MongoDB (Local or Atlas)
-* A free Gemini API Key (from Google AI Studio)
-
-### 1. Backend Setup
 
 ```bash
 cd backend
 python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-pip install -r requirements.txt
+venv\Scripts\activate          # on Windows
+# source venv/bin/activate     # on macOS/Linux
+
+pip install -r ../requirements.txt
 ```
 
-**Environment Variables (`backend/.env`):**
-```env
-MONGO_URI=mongodb://localhost:27017/
-GEMINI_API_KEY=your_google_gemini_api_key_here
+You'll also need two things installed system-wide for OCR to work:
+- [Tesseract OCR](https://github.com/UB-Mannheim/tesseract/wiki)
+- [Poppler](https://github.com/oschwartz10612/poppler-windows/releases) (Windows only — Linux typically has this via `poppler-utils`)
+
+Create a `.env` file inside `backend/`:
+
+```
+MONGO_URI=your_mongodb_connection_string
+GEMINI_API_KEY=your_gemini_api_key
 ```
 
-**Run the Server:**
+Then run:
+
 ```bash
 uvicorn main:app --reload
 ```
-*Backend will run on `http://localhost:8000`*
 
-### 2. Frontend Setup
+### Frontend
 
 ```bash
 cd frontend
 npm install
-```
-
-**Run the Client:**
-```bash
 npm run dev
 ```
-*Frontend will run on `http://localhost:3000`*
 
----
+Update the API base URL in `frontend/app/page.tsx` if you're pointing it at a local backend instead of the deployed one — it currently points at the production Render URL.
 
-## 🔌 API Endpoints
+## Known limitations
 
-| Method | Endpoint | Description |
-| :--- | :--- | :--- |
-| `POST` | `/upload` | Upload a file and start background processing |
-| `GET` | `/files` | List all files uploaded by the current device |
-| `GET` | `/files/{id}/status`| Check processing progress of a file |
-| `DELETE`| `/files/{id}` | Delete a file from GridFS and ChromaDB |
-| `POST` | `/chats` | Create a new chat session |
-| `GET` | `/chats` | Get all chat sessions for the current device |
-| `POST` | `/chat` | Send a message to the AI and get a response |
-| `GET` | `/clear-all-data` | **Admin:** Wipes the entire database to start fresh |
+Being upfront about what this doesn't do perfectly:
 
----
+- OCR accuracy on code screenshots depends heavily on image quality — dense, syntax-highlighted code with small fonts can still come out with the occasional wrong character. Worth a manual double-check if you're copying code out for real use.
+- No proper user accounts — device-based isolation is convenient but not "secure" in the auth sense. Clearing browser storage resets your session.
+- Very large files (200+ pages, heavily scanned) will take a while to process even with parallel OCR, since Tesseract itself is the bottleneck.
+- Free-tier hosting (Render) means the backend can spin down when idle — the first request after a while might be slow to wake it up.
 
-## 🔒 Security & Privacy
-This project does NOT require user authentication (login/passwords). Instead, it uses **Anonymous Device IDs** generated via `crypto.randomUUID()` and stored in the browser's `localStorage`. This ensures zero-friction onboarding while keeping user data strictly isolated from others.
+## Possible next steps
+
+- Proper authentication instead of device-ID isolation
+- Support for XLSX/CSV and PPTX uploads
+- Source citations in answers (which chunk/page an answer came from)
+- Streaming responses instead of waiting for the full answer
+- Swappable LLM provider instead of hardcoding one API
+
