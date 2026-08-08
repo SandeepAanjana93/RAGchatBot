@@ -57,8 +57,8 @@ messages_collection = db["chat_messages"]
 chroma_client = chromadb.PersistentClient(path="chroma_db")
 collection = chroma_client.get_or_create_collection(name="documents")
 
-MODAL_API_KEY = os.getenv("MODAL_API_KEY")
-MODAL_URL = "https://sandeep67patel--ep-kimi-k3-server.us-west.modal.direct/v1/chat/completions"
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 
 def table_to_text(table) -> str:
@@ -453,16 +453,16 @@ Context:
 Question: {question}
 
 Answer:"""
-        headers = {"Authorization": f"Bearer {MODAL_API_KEY}", "Content-Type": "application/json"}
+        headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
         payload = {
-            "model": "moonshotai/Kimi-K3",
+            "model": "llama3-70b-8192",
             "messages": [{"role": "user", "content": prompt}],
             "max_tokens": 1024,
             "temperature": 0.2,
             "stream": False
         }
 
-        response = requests.post(MODAL_URL, headers=headers, json=payload, timeout=30)
+        response = requests.post(GROQ_URL, headers=headers, json=payload, timeout=30)
         result = response.json()
 
         if "choices" not in result:
