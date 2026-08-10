@@ -219,30 +219,90 @@ export default function Home() {
     }, 1500);
   };
 
-  const handleFile = async (file: File) => {
-    setUploading(true);
-    const formData = new FormData();
-    formData.append("file", file);
+  const handleSend = async () => {
+  if (!input.trim() || !activeSessionId) return;
 
-    try {
-      const res = await fetch("https://file-chatbot.onrender.com/upload", {
-        method: "POST",
-        headers: getHeaders(),
-        body: formData,
-      });
+  const userMsg: ChatMessage = { sender: "user", text: input };
+  setMessages((prev) => [...prev, userMsg]);
+  const questionText = input;
+  setInput("");
+  setThinking(true);
 
-      if (!res.ok) throw new Error("Upload failed");
+  // Empty AI message add karo jisme tokens aate jayenge
+  setMessages((prev) => [...prev, { sender: "ai", text: "" }]);
 
-      const data = await res.json();
-      await fetchFiles();
-      pollFileStatus(data.file_id);
-    } catch (err) {
-      showToast("File upload failed. Please check if the backend server is running.", 'error');
-      console.error(err);
-    } finally {
-      setUploading(false);
+  try {
+    const res = await fetch("https://file-chatbot.onrender.com/chat", {
+      method: "POST",
+      headers: getHeaders(true),
+      body: JSON.stringify({ session_id: activeSessionId, question: questionText }),
+    });
+
+    if (!res.ok) throw new Error("Chat request failed");
+    if (!res.body) throw new Error("No response body");
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let fullText = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      const chunk = decoder.decode(value, { stream: true });
+      const lines = chunk.split("\n");
+
+      for (const line of lines) {
+        if (line.startsWith("data: ")) {
+          try {
+            const data = JSON.parse(line.slice(6));
+
+            if (data.token) {
+              fullText += data.token;
+              // Last AI message ko update karo
+              setMessages((prev) => {
+                const updated = [...prev];
+                updated[updated.length - 1] = {
+                  sender: "ai",
+                  text: fullText,
+                };
+                return updated;
+              });
+            }
+
+            if (data.done) {
+              break;
+            }
+          } catch (e) {
+            // ignore parse errors
+          }
+        }
+      }
     }
-  };
+
+    await fetchSessions();
+  } catch (err) {
+    setMessages((prev) => {
+      const updated = [...prev];
+      // Agar empty AI message hai to usko error se replace kar do
+      if (updated[updated.length - 1]?.sender === "ai" && updated[updated.length - 1].text === "") {
+        updated[updated.length - 1] = {
+          sender: "ai",
+          text: "⚠️ Something went wrong. Please check if the backend server is running.",
+        };
+      } else {
+        updated.push({
+          sender: "ai",
+          text: "⚠️ Something went wrong. Please check if the backend server is running.",
+        });
+      }
+      return updated;
+    });
+    console.error(err);
+  } finally {
+    setThinking(false);
+  }
+};
 
   const handleDeleteFile = async (fileId: string) => {
     const confirmed = await showConfirm("Are you sure you want to delete this file?");
@@ -270,33 +330,28 @@ export default function Home() {
     }
   };
 
-  const handleSend = async () => {
-    if (!input.trim() || !activeSessionId) return;
-
-    const userMsg: ChatMessage = { sender: "user", text: input };
-    setMessages((prev) => [...prev, userMsg]);
-    const questionText = input;
-    setInput("");
-    setThinking(true);
+  const handleFile = async (file: File) => {
+    setUploading(true);
+    const formData = new FormData();
+    formData.append("file", file);
 
     try {
-      const res = await fetch("https://file-chatbot.onrender.com/chat", {
+      const res = await fetch("https://file-chatbot.onrender.com/upload", {
         method: "POST",
-        headers: getHeaders(true),
-        body: JSON.stringify({ session_id: activeSessionId, question: questionText }),
+        headers: getHeaders(),
+        body: formData,
       });
 
+      if (!res.ok) throw new Error("Upload failed");
+
       const data = await res.json();
-      setMessages((prev) => [...prev, { sender: "ai", text: data.answer }]);
-      await fetchSessions();
+      await fetchFiles();
+      pollFileStatus(data.file_id);
     } catch (err) {
-      setMessages((prev) => [
-        ...prev,
-        { sender: "ai", text: "⚠️ Something went wrong. Please check if the backend server is running." },
-      ]);
+      showToast("File upload failed. Please check if the backend server is running.", 'error');
       console.error(err);
     } finally {
-      setThinking(false);
+      setUploading(false);
     }
   };
 

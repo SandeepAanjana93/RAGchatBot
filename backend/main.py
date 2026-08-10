@@ -1,6 +1,8 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+import httpx
+import json
 from pydantic import BaseModel
 import os
 import io
@@ -22,7 +24,6 @@ from dotenv import load_dotenv
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import pytesseract
 
-import os
 import platform
 
 load_dotenv(override=True)
@@ -425,7 +426,6 @@ class ChatRequest(BaseModel):
     session_id: str
     question: str
 
-
 @app.post("/chat")
 async def chat(request: ChatRequest, x_device_id: str = Header(...)):
     question = request.question
@@ -435,30 +435,45 @@ async def chat(request: ChatRequest, x_device_id: str = Header(...)):
     if not session_doc:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    try:
+    # User message save karo
+    messages_collection.insert_one({
+        "session_id": session_id,
+        "sender": "user",
+        "text": question,
+        "timestamp": datetime.utcnow()
+    })
+
+    # Title update (pehla message)
+    existing_count = messages_collection.count_documents({"session_id": session_id})
+    if existing_count == 1:
+        title = question[:40] + ("..." if len(question) > 40 else "")
+        sessions_collection.update_one(
+            {"_id": ObjectId(session_id)},
+            {"$set": {"title": title}}
+        )
+
+    # ChromaDB se relevant chunks nikaalo
+    results = collection.query(
+        query_texts=[question],
+        n_results=5,
+        where={"device_id": x_device_id}
+    )
+
+    relevant_chunks = results["documents"][0] if results["documents"] else []
+    context = "\n\n---\n\n".join(relevant_chunks)
+
+    if not context:
+        answer = "No files have been uploaded or no relevant information was found. Please upload a file first."
         messages_collection.insert_one({
-            "session_id": session_id, "sender": "user", "text": question, "timestamp": datetime.utcnow()
+            "session_id": session_id,
+            "sender": "ai",
+            "text": answer,
+            "timestamp": datetime.utcnow()
         })
+        return {"answer": answer}
 
-        existing_count = messages_collection.count_documents({"session_id": session_id})
-        if existing_count == 1:
-            title = question[:40] + ("..." if len(question) > 40 else "")
-            sessions_collection.update_one({"_id": ObjectId(session_id)}, {"$set": {"title": title}})
-
-        # Query ChromaDB (it will embed automatically) with device_id filter
-        results = collection.query(query_texts=[question], n_results=15, where={"device_id": x_device_id})
-
-        relevant_chunks = results["documents"][0] if results["documents"] else []
-        context = "\n\n---\n\n".join(relevant_chunks)
-
-        if not context:
-            answer = "No files have been uploaded or no relevant information was found. Please upload a file first."
-            messages_collection.insert_one({
-                "session_id": session_id, "sender": "ai", "text": answer, "timestamp": datetime.utcnow()
-            })
-            return {"answer": answer}
-
-        prompt = f"""You are a document assistant. The "Context" provided below is your ONLY source of knowledge.
+    # Prompt banao
+    prompt = f"""You are a document assistant. The "Context" provided below is your ONLY source of knowledge.
 
 STRICT RULES:
 1. Answer ONLY based on what is written in the "Context" below.
@@ -472,30 +487,55 @@ Context:
 Question: {question}
 
 Answer:"""
-        headers = {"Content-Type": "application/json"}
-        payload = {
-            "contents": [{
-                "parts": [{"text": prompt}]
-            }]
-        }
 
-        gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key={GEMINI_API_KEY}"
-        response = requests.post(gemini_url, headers=headers, json=payload, timeout=30)
-        result = response.json()
+    # Streaming generator
+    async def generate():
+        full_answer = ""
+        try:
+            gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:streamGenerateContent?alt=sse&key={GEMINI_API_KEY}"
+            
+            payload = {
+                "contents": [{
+                    "parts": [{"text": prompt}]
+                }]
+            }
 
-        if "candidates" not in result:
-            answer = f"AI se error aaya: {result}"
-        else:
-            answer = result["candidates"][0]["content"]["parts"][0]["text"]
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                async with client.stream("POST", gemini_url, json=payload, headers={"Content-Type": "application/json"}) as response:
+                    async for line in response.aiter_lines():
+                        if line.startswith("data: "):
+                            data_str = line[6:]
+                            if data_str.strip() == "[DONE]":
+                                break
+                            try:
+                                data = json.loads(data_str)
+                                if "candidates" in data and data["candidates"]:
+                                    parts = data["candidates"][0].get("content", {}).get("parts", [])
+                                    if parts and "text" in parts[0]:
+                                        token = parts[0]["text"]
+                                        full_answer += token
+                                        yield f"data: {json.dumps({'token': token})}\n\n"
+                            except:
+                                continue
 
-        messages_collection.insert_one({
-            "session_id": session_id, "sender": "ai", "text": answer, "timestamp": datetime.utcnow()
-        })
-        return {"answer": answer}
+            # Final answer MongoDB mein save karo
+            messages_collection.insert_one({
+                "session_id": session_id,
+                "sender": "ai",
+                "text": full_answer,
+                "timestamp": datetime.utcnow()
+            })
 
-    except Exception as e:
-        error_msg = f"System Error: {str(e)}"
-        messages_collection.insert_one({
-            "session_id": session_id, "sender": "ai", "text": error_msg, "timestamp": datetime.utcnow()
-        })
-        return {"answer": error_msg}
+            yield f"data: {json.dumps({'done': True})}\n\n"
+
+        except Exception as e:
+            error_msg = f"System Error: {str(e)}"
+            messages_collection.insert_one({
+                "session_id": session_id,
+                "sender": "ai",
+                "text": error_msg,
+                "timestamp": datetime.utcnow()
+            })
+            yield f"data: {json.dumps({'token': error_msg, 'done': True})}\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
