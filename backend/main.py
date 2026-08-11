@@ -61,6 +61,48 @@ collection = chroma_client.get_or_create_collection(name="documents")
 GEMINI_API_KEY = os.getenv("GROQ_API_KEY") or os.getenv("GEMINI_API_KEY")
 
 
+@app.on_event("startup")
+def reindex_chromadb_on_startup():
+    """Server restart hone par ChromaDB me wapas saara data daal do MongoDB se"""
+    global collection
+    ready_files = list(files_collection.find({"status": "ready"}))
+    if not ready_files:
+        print("✅ No files to re-index.")
+        return
+
+    reindexed = 0
+    for file_doc in ready_files:
+        file_id = str(file_doc["_id"])
+        filename = file_doc.get("filename", "unknown")
+        device_id = file_doc.get("device_id", "unknown")
+        extracted_text = file_doc.get("extracted_text", "")
+
+        if not extracted_text:
+            continue
+
+        # Check if chunks already exist in ChromaDB
+        try:
+            existing = collection.get(where={"file_id": file_id})
+            if existing and existing["ids"] and len(existing["ids"]) > 0:
+                continue  # Already indexed, skip
+        except Exception:
+            pass
+
+        # Re-chunk and re-add
+        chunks = chunk_text(extracted_text)
+        if chunks:
+            ids = [f"{file_id}_chunk_{i}" for i in range(len(chunks))]
+            metadatas = [{"filename": filename, "file_id": file_id, "chunk_index": i, "device_id": device_id} for i in range(len(chunks))]
+            try:
+                collection.add(documents=chunks, ids=ids, metadatas=metadatas)
+                reindexed += 1
+                print(f"🔄 Re-indexed: {filename} ({len(chunks)} chunks)")
+            except Exception as e:
+                print(f"❌ Re-index failed for {filename}: {e}")
+
+    print(f"✅ Startup re-index complete. {reindexed}/{len(ready_files)} files re-indexed.")
+
+
 def table_to_text(table) -> str:
     text = ""
     for row in table:
