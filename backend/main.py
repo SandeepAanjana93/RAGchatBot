@@ -5,6 +5,11 @@ import httpx
 import json
 from pydantic import BaseModel
 from typing import Optional
+import jwt
+import bcrypt
+from fastapi import Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+
 import os
 import io
 import base64
@@ -62,6 +67,62 @@ collection = chroma_client.get_or_create_collection(name="documents")
 
 GEMINI_API_KEY = os.getenv("GROQ_API_KEY") or os.getenv("GEMINI_API_KEY")
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "supersecretadmin")
+
+JWT_SECRET = os.getenv("JWT_SECRET", "super-secret-key-1234")
+JWT_ALGORITHM = "HS256"
+
+security = HTTPBearer()
+users_collection = db["users"]
+
+def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    token = credentials.credentials
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        user_id = payload.get("user_id")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token payload")
+        return user_id
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+class UserCreate(BaseModel):
+    username: str
+    password: str
+    
+class UserLogin(BaseModel):
+    username: str
+    password: str
+
+@app.post("/api/auth/signup")
+def signup(user: UserCreate):
+    existing = users_collection.find_one({"username": user.username})
+    if existing:
+        raise HTTPException(status_code=400, detail="Username already exists")
+    
+    hashed_pwd = bcrypt.hashpw(user.password.encode('utf-8'), bcrypt.gensalt())
+    user_id = str(users_collection.insert_one({
+        "username": user.username,
+        "password": hashed_pwd,
+        "created_at": datetime.utcnow()
+    }).inserted_id)
+    
+    token = jwt.encode({"user_id": user_id}, JWT_SECRET, algorithm=JWT_ALGORITHM)
+    return {"token": token, "username": user.username}
+
+@app.post("/api/auth/login")
+def login(user: UserLogin):
+    db_user = users_collection.find_one({"username": user.username})
+    if not db_user:
+        raise HTTPException(status_code=400, detail="Invalid credentials")
+        
+    if not bcrypt.checkpw(user.password.encode('utf-8'), db_user["password"]):
+        raise HTTPException(status_code=400, detail="Invalid credentials")
+        
+    token = jwt.encode({"user_id": str(db_user["_id"])}, JWT_SECRET, algorithm=JWT_ALGORITHM)
+    return {"token": token, "username": user.username}
+
 
 
 @app.on_event("startup")
@@ -253,12 +314,12 @@ def extract_text_from_pdf(file_bytes: bytes, progress_callback=None) -> str:
                     percent = int((completed / total_pages) * 100)
                     progress_callback(percent)
 
-        # Original page order me wapas jodo
-        text = "\n\n".join(results[i] for i in range(total_pages))
-        return text
+        # Original page order me wapas jodo (keep page mapping)
+        pages_data = [{"page": i+1, "text": results.get(i, "")} for i in range(total_pages)]
+        return pages_data
 
 
-def extract_text_from_docx(file_bytes: bytes) -> str:
+def extract_text_from_docx(file_bytes: bytes) -> list:
     doc = docx.Document(io.BytesIO(file_bytes))
     text = ""
     for para in doc.paragraphs:
@@ -268,12 +329,12 @@ def extract_text_from_docx(file_bytes: bytes) -> str:
         for row in table.rows:
             row_text = " | ".join([cell.text for cell in row.cells])
             text += row_text + "\n"
-    return text
+    return [{"page": 1, "text": text}]
 
 
-def extract_text_from_image(file_bytes: bytes) -> str:
+def extract_text_from_image(file_bytes: bytes) -> list:
     img = Image.open(io.BytesIO(file_bytes))
-    return run_ocr(img)
+    return [{"page": 1, "text": run_ocr(img)}]
 
 
 def extract_text(file_bytes: bytes, filename: str, progress_callback=None) -> str:
@@ -291,54 +352,61 @@ def extract_text(file_bytes: bytes, filename: str, progress_callback=None) -> st
         return ""
 
 
-def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50):
-    """Semantic chunking using paragraphs and sentences to preserve meaning."""
-    paragraphs = re.split(r'\n\s*\n', text)
-    chunks = []
-    current_chunk = ""
-    current_words = 0
-    
-    for p in paragraphs:
-        p = p.strip()
-        if not p:
-            continue
-            
-        p_words = len(p.split())
-        
-        if current_words + p_words > chunk_size and current_chunk:
-            chunks.append(current_chunk.strip())
-            # Overlap handling (take last N sentences that fit in overlap)
-            sentences = re.split(r'(?<=[.!?])\s+', current_chunk)
-            overlap_text = ""
-            overlap_words = 0
-            for s in reversed(sentences):
-                s_words = len(s.split())
-                if overlap_words + s_words > overlap and overlap_text:
-                    break
-                overlap_text = s + " " + overlap_text
-                overlap_words += s_words
-                
-            current_chunk = overlap_text.strip()
-            current_words = overlap_words
-            
-        current_chunk += "\n\n" + p if current_chunk else p
-        current_words += p_words
-        
-    if current_chunk:
-        chunks.append(current_chunk.strip())
-        
-    # Fallback for huge paragraphs without newlines
+def chunk_text(pages_data, chunk_size: int = 500, overlap: int = 50):
+    """Semantic chunking with page number tracking."""
     final_chunks = []
-    for c in chunks:
-        words = c.split()
-        if len(words) > chunk_size + 100:
-            i = 0
-            while i < len(words):
-                final_chunks.append(" ".join(words[i:i + chunk_size]))
-                i += chunk_size - overlap
-        else:
-            final_chunks.append(c)
+    
+    # Backward compatibility for reindexing string payloads
+    if isinstance(pages_data, str):
+        pages_data = [{"page": 1, "text": pages_data}]
+
+    for page_item in pages_data:
+        text = page_item["text"]
+        page_num = page_item["page"]
+        
+        paragraphs = re.split(r'\n\s*\n', text)
+        chunks = []
+        current_chunk = ""
+        current_words = 0
+        
+        for p in paragraphs:
+            p = p.strip()
+            if not p:
+                continue
+                
+            p_words = len(p.split())
             
+            if current_words + p_words > chunk_size and current_chunk:
+                chunks.append(current_chunk.strip())
+                sentences = re.split(r'(?<=[.!?])\s+', current_chunk)
+                overlap_text = ""
+                overlap_words = 0
+                for s in reversed(sentences):
+                    s_words = len(s.split())
+                    if overlap_words + s_words > overlap and overlap_text:
+                        break
+                    overlap_text = s + " " + overlap_text
+                    overlap_words += s_words
+                    
+                current_chunk = overlap_text.strip()
+                current_words = overlap_words
+                
+            current_chunk += "\n\n" + p if current_chunk else p
+            current_words += p_words
+            
+        if current_chunk:
+            chunks.append(current_chunk.strip())
+            
+        for c in chunks:
+            words = c.split()
+            if len(words) > chunk_size + 100:
+                i = 0
+                while i < len(words):
+                    final_chunks.append({"text": " ".join(words[i:i + chunk_size]), "page": page_num})
+                    i += chunk_size - overlap
+            else:
+                final_chunks.append({"text": c, "page": page_num})
+                
     return final_chunks
 
 
@@ -404,7 +472,7 @@ def process_file_background(file_id: str, file_bytes: bytes, filename: str, devi
 
 
 @app.post("/upload")
-async def upload_file(file: UploadFile = File(...), background_tasks: BackgroundTasks = None, x_device_id: str = Header(...)):
+async def upload_file(file: UploadFile = File(...), background_tasks: BackgroundTasks = None, user_id: str = Depends(get_current_user)):
     file_bytes = await file.read()
     file_size = len(file_bytes)
 
@@ -418,7 +486,7 @@ async def upload_file(file: UploadFile = File(...), background_tasks: Background
         "status": "processing",
         "progress": 0,
         "upload_date": datetime.utcnow(),
-        "device_id": x_device_id
+        "device_id": user_id
     }
     result = files_collection.insert_one(file_doc)
     file_id = str(result.inserted_id)
@@ -435,8 +503,8 @@ async def upload_file(file: UploadFile = File(...), background_tasks: Background
 
 
 @app.get("/files/{file_id}/status")
-def get_file_status(file_id: str, x_device_id: str = Header(...)):
-    file_doc = files_collection.find_one({"_id": ObjectId(file_id), "device_id": x_device_id})
+def get_file_status(file_id: str, user_id: str = Depends(get_current_user)):
+    file_doc = files_collection.find_one({"_id": ObjectId(file_id), "device_id": user_id})
     if not file_doc:
         raise HTTPException(status_code=404, detail="File not found")
     return {
@@ -449,8 +517,8 @@ def get_file_status(file_id: str, x_device_id: str = Header(...)):
 
 
 @app.get("/files")
-def list_files(x_device_id: str = Header(...)):
-    files = files_collection.find({"device_id": x_device_id}, {"filename": 1, "file_size": 1, "upload_date": 1, "status": 1, "progress": 1})
+def list_files(user_id: str = Depends(get_current_user)):
+    files = files_collection.find({"device_id": user_id}, {"filename": 1, "file_size": 1, "upload_date": 1, "status": 1, "progress": 1})
     result = []
     for f in files:
         result.append({
@@ -465,8 +533,8 @@ def list_files(x_device_id: str = Header(...)):
 
 
 @app.get("/files/{file_id}/download")
-def download_file(file_id: str, x_device_id: str = Header(...)):
-    file_doc = files_collection.find_one({"_id": ObjectId(file_id), "device_id": x_device_id})
+def download_file(file_id: str, user_id: str = Depends(get_current_user)):
+    file_doc = files_collection.find_one({"_id": ObjectId(file_id), "device_id": user_id})
     if not file_doc:
         raise HTTPException(status_code=404, detail="File not found")
     grid_file = fs.get(file_doc["gridfs_id"])
@@ -478,8 +546,8 @@ def download_file(file_id: str, x_device_id: str = Header(...)):
 
 
 @app.delete("/files/{file_id}")
-def delete_file(file_id: str, x_device_id: str = Header(...)):
-    file_doc = files_collection.find_one({"_id": ObjectId(file_id), "device_id": x_device_id})
+def delete_file(file_id: str, user_id: str = Depends(get_current_user)):
+    file_doc = files_collection.find_one({"_id": ObjectId(file_id), "device_id": user_id})
     if not file_doc:
         raise HTTPException(status_code=404, detail="File not found")
     fs.delete(file_doc["gridfs_id"])
@@ -489,15 +557,15 @@ def delete_file(file_id: str, x_device_id: str = Header(...)):
 
 
 @app.post("/chats")
-def create_chat_session(x_device_id: str = Header(...)):
-    session_doc = {"title": "New Chat", "created_at": datetime.utcnow(), "device_id": x_device_id}
+def create_chat_session(user_id: str = Depends(get_current_user)):
+    session_doc = {"title": "New Chat", "created_at": datetime.utcnow(), "device_id": user_id}
     result = sessions_collection.insert_one(session_doc)
     return {"session_id": str(result.inserted_id), "title": "New Chat"}
 
 
 @app.get("/chats")
-def list_chat_sessions(x_device_id: str = Header(...)):
-    sessions = sessions_collection.find({"device_id": x_device_id}).sort("created_at", -1)
+def list_chat_sessions(user_id: str = Depends(get_current_user)):
+    sessions = sessions_collection.find({"device_id": user_id}).sort("created_at", -1)
     result = []
     for s in sessions:
         result.append({
@@ -509,8 +577,8 @@ def list_chat_sessions(x_device_id: str = Header(...)):
 
 
 @app.delete("/chats/{session_id}")
-def delete_chat_session(session_id: str, x_device_id: str = Header(...)):
-    session_doc = sessions_collection.find_one({"_id": ObjectId(session_id), "device_id": x_device_id})
+def delete_chat_session(session_id: str, user_id: str = Depends(get_current_user)):
+    session_doc = sessions_collection.find_one({"_id": ObjectId(session_id), "device_id": user_id})
     if not session_doc:
         raise HTTPException(status_code=404, detail="Session not found")
     sessions_collection.delete_one({"_id": ObjectId(session_id)})
@@ -519,8 +587,8 @@ def delete_chat_session(session_id: str, x_device_id: str = Header(...)):
 
 
 @app.get("/chats/{session_id}/messages")
-def get_session_messages(session_id: str, x_device_id: str = Header(...)):
-    session_doc = sessions_collection.find_one({"_id": ObjectId(session_id), "device_id": x_device_id})
+def get_session_messages(session_id: str, user_id: str = Depends(get_current_user)):
+    session_doc = sessions_collection.find_one({"_id": ObjectId(session_id), "device_id": user_id})
     if not session_doc:
         raise HTTPException(status_code=404, detail="Session not found")
     messages = messages_collection.find({"session_id": session_id}).sort("timestamp", 1)
@@ -536,12 +604,12 @@ class ChatRequest(BaseModel):
     file_id: Optional[str] = None  # Optional file_id for per-file filtering
 
 @app.post("/chat")
-async def chat(request: ChatRequest, x_device_id: str = Header(...)):
+async def chat(request: ChatRequest, user_id: str = Depends(get_current_user)):
     question = request.question
     session_id = request.session_id
     file_id = request.file_id
 
-    session_doc = sessions_collection.find_one({"_id": ObjectId(session_id), "device_id": x_device_id})
+    session_doc = sessions_collection.find_one({"_id": ObjectId(session_id), "device_id": user_id})
     if not session_doc:
         raise HTTPException(status_code=404, detail="Session not found")
 
@@ -590,9 +658,9 @@ Standalone Query:"""
             print("Query rewrite failed:", e)
 
     # ChromaDB query with per-file filtering
-    where_clause = {"device_id": x_device_id}
+    where_clause = {"device_id": user_id}
     if file_id:
-        where_clause = {"$and": [{"device_id": x_device_id}, {"file_id": file_id}]}
+        where_clause = {"$and": [{"device_id": user_id}, {"file_id": file_id}]}
 
     results = collection.query(
         query_texts=[search_query],
@@ -607,10 +675,11 @@ Standalone Query:"""
             distance = results["distances"][0][idx]
             metadata = results["metadatas"][0][idx]
             filename = metadata.get("filename", "Unknown File")
+            page_num = metadata.get("page_num", 1)
             
             # Distance threshold (lower is better for L2). Usually < 1.3 is good.
             if distance < 1.3:
-                relevant_chunks.append(f"[Source: {filename}]\n{doc}")
+                relevant_chunks.append(f"[Source: {filename} - Page {page_num}]\n{doc}")
 
     context = "\n\n---\n\n".join(relevant_chunks)
 
@@ -633,7 +702,7 @@ Answer:"""
     # Streaming generator
     async def generate():
         # Check system state (files processing, empty, etc.)
-        user_files = list(files_collection.find({"device_id": x_device_id}))
+        user_files = list(files_collection.find({"device_id": user_id}))
         ready = [f for f in user_files if f.get("status") == "ready"]
         
         system_error_answer = None
@@ -716,7 +785,8 @@ Answer:"""
             yield f"data: {json.dumps({'done': True})}\n\n"
 
         except Exception as e:
-            error_msg = f"System Error: {str(e)}"
+            error_msg = "⚠️ An internal error occurred while processing your request. Please try again."
+            print(f"System Error in chat: {e}")
             messages_collection.insert_one({
                 "session_id": session_id,
                 "sender": "ai",

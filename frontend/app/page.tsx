@@ -42,29 +42,70 @@ export default function Home() {
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [darkMode, setDarkMode] = useState(false);
+
+  const [token, setToken] = useState<string | null>(null);
+  const [username, setUsername] = useState<string | null>(null);
+  const [isLoginMode, setIsLoginMode] = useState(true);
+  const [authUsername, setAuthUsername] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authError, setAuthError] = useState("");
+
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Load dark mode preference and Device ID from localStorage
   useEffect(() => {
     const saved = localStorage.getItem('darkMode');
     if (saved !== null) setDarkMode(JSON.parse(saved));
 
-    let id = localStorage.getItem("deviceId");
-    if (!id) {
-      id = crypto.randomUUID();
-      localStorage.setItem("deviceId", id);
+    const savedToken = localStorage.getItem('token');
+    const savedUsername = localStorage.getItem('username');
+    if (savedToken) {
+      setToken(savedToken);
+      setUsername(savedUsername);
     }
   }, []);
 
   const getHeaders = (isJson = false) => {
-    const headers: Record<string, string> = {
-      "X-Device-ID": localStorage.getItem("deviceId") || ""
-    };
+    const headers: Record<string, string> = {};
+    if (token) headers["Authorization"] = `Bearer ${token}`;
     if (isJson) headers["Content-Type"] = "application/json";
     return headers;
+  };
+
+  const handleAuth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError("");
+    const endpoint = isLoginMode ? "/api/auth/login" : "/api/auth/signup";
+    try {
+      const res = await fetch(`https://file-chatbot.onrender.com${endpoint}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: authUsername, password: authPassword }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Authentication failed");
+      
+      localStorage.setItem("token", data.token);
+      localStorage.setItem("username", data.username);
+      setToken(data.token);
+      setUsername(data.username);
+      showToast(isLoginMode ? "Logged in successfully" : "Account created successfully", "success");
+    } catch (err: any) {
+      setAuthError(err.message);
+    }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem("token");
+    localStorage.removeItem("username");
+    setToken(null);
+    setUsername(null);
+    setSessions([]);
+    setMessages([]);
+    setUploadedFiles([]);
+    setActiveSessionId(null);
   };
 
   const toggleDarkMode = () => {
@@ -360,6 +401,68 @@ export default function Home() {
     setCopiedIdx(idx);
     setTimeout(() => setCopiedIdx(null), 1800);
   };
+
+  
+  if (!token) {
+    return (
+      <div className={`min-h-screen flex items-center justify-center transition-colors duration-300 ${darkMode ? 'bg-[#0B0C10] text-gray-200' : 'bg-[#FAFAFA] text-[#1A1B23]'}`}>
+        <div className={`w-full max-w-md p-8 rounded-3xl shadow-xl border ${darkMode ? 'bg-[#1E1E2E] border-white/10' : 'bg-white border-gray-100'}`}>
+          <div className="text-center mb-8">
+            <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-[#E91E8C] to-[#F472B6] mx-auto flex items-center justify-center shadow-lg shadow-pink-500/30 mb-6 ai-avatar-glow">
+              <svg className="w-8 h-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+              </svg>
+            </div>
+            <h1 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-[#E91E8C] to-[#F472B6]">
+              {isLoginMode ? 'Welcome Back' : 'Create Account'}
+            </h1>
+            <p className="text-sm text-gray-400 mt-2">Sign in to access your secure RAG workspace</p>
+          </div>
+
+          <form onSubmit={handleAuth} className="space-y-5">
+            <div>
+              <label className="block text-sm font-medium mb-2 text-gray-400">Username</label>
+              <input
+                type="text"
+                value={authUsername}
+                onChange={(e) => setAuthUsername(e.target.value)}
+                className={`w-full px-4 py-3 rounded-xl outline-none transition-all ${darkMode ? 'bg-[#0B0C10] border border-white/10 focus:border-[#E91E8C] text-white' : 'bg-gray-50 border border-gray-200 focus:border-[#E91E8C]'}`}
+                placeholder="Enter username"
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-2 text-gray-400">Password</label>
+              <input
+                type="password"
+                value={authPassword}
+                onChange={(e) => setAuthPassword(e.target.value)}
+                className={`w-full px-4 py-3 rounded-xl outline-none transition-all ${darkMode ? 'bg-[#0B0C10] border border-white/10 focus:border-[#E91E8C] text-white' : 'bg-gray-50 border border-gray-200 focus:border-[#E91E8C]'}`}
+                placeholder="Enter password"
+                required
+              />
+            </div>
+
+            {authError && <div className="text-red-500 text-sm text-center bg-red-500/10 py-2 rounded-lg">{authError}</div>}
+
+            <button type="submit" className="w-full py-3.5 rounded-xl text-white font-semibold flex items-center justify-center gap-2 transition-all hover:opacity-90 active:scale-[0.98] send-ripple" style={{ background: 'linear-gradient(135deg, #E91E8C, #F472B6)', boxShadow: '0 4px 16px rgba(233, 30, 140, 0.3)' }}>
+              {isLoginMode ? 'Sign In' : 'Sign Up'}
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
+              </svg>
+            </button>
+          </form>
+
+          <p className="text-center text-sm text-gray-400 mt-6">
+            {isLoginMode ? "Don't have an account? " : "Already have an account? "}
+            <button onClick={() => setIsLoginMode(!isLoginMode)} className="text-[#E91E8C] font-semibold hover:underline">
+              {isLoginMode ? 'Sign up' : 'Sign in'}
+            </button>
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={`flex h-screen relative transition-colors duration-300 overflow-hidden ${darkMode ? 'bg-[#0D0D14] text-gray-100' : 'bg-[#FAFAFA] text-[#1A1B23]'}`}>
