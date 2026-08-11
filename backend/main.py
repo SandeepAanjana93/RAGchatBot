@@ -384,7 +384,7 @@ async def upload_file(file: UploadFile = File(...), background_tasks: Background
         "file_id": file_id,
         "filename": file.filename,
         "size": file_size,
-        "message": "File upload ho gayi, processing shuru hui",
+        "message": "File uploaded successfully. Processing has started.",
         "status": "processing"
     }
 
@@ -393,7 +393,7 @@ async def upload_file(file: UploadFile = File(...), background_tasks: Background
 def get_file_status(file_id: str, x_device_id: str = Header(...)):
     file_doc = files_collection.find_one({"_id": ObjectId(file_id), "device_id": x_device_id})
     if not file_doc:
-        raise HTTPException(status_code=404, detail="File nahi mili")
+        raise HTTPException(status_code=404, detail="File not found")
     return {
         "status": file_doc.get("status", "unknown"),
         "progress": file_doc.get("progress", 0),
@@ -423,7 +423,7 @@ def list_files(x_device_id: str = Header(...)):
 def download_file(file_id: str, x_device_id: str = Header(...)):
     file_doc = files_collection.find_one({"_id": ObjectId(file_id), "device_id": x_device_id})
     if not file_doc:
-        raise HTTPException(status_code=404, detail="File nahi mili")
+        raise HTTPException(status_code=404, detail="File not found")
     grid_file = fs.get(file_doc["gridfs_id"])
     return StreamingResponse(
         io.BytesIO(grid_file.read()),
@@ -436,11 +436,11 @@ def download_file(file_id: str, x_device_id: str = Header(...)):
 def delete_file(file_id: str, x_device_id: str = Header(...)):
     file_doc = files_collection.find_one({"_id": ObjectId(file_id), "device_id": x_device_id})
     if not file_doc:
-        raise HTTPException(status_code=404, detail="File nahi mili")
+        raise HTTPException(status_code=404, detail="File not found")
     fs.delete(file_doc["gridfs_id"])
     collection.delete(where={"file_id": file_id})
     files_collection.delete_one({"_id": ObjectId(file_id)})
-    return {"message": "File delete ho gayi"}
+    return {"message": "File deleted successfully"}
 
 
 @app.post("/chats")
@@ -470,7 +470,7 @@ def delete_chat_session(session_id: str, x_device_id: str = Header(...)):
         raise HTTPException(status_code=404, detail="Session not found")
     sessions_collection.delete_one({"_id": ObjectId(session_id)})
     messages_collection.delete_many({"session_id": session_id})
-    return {"message": "Chat delete ho gayi"}
+    return {"message": "Chat deleted successfully"}
 
 
 @app.get("/chats/{session_id}/messages")
@@ -548,7 +548,7 @@ Answer:"""
             user_files = list(files_collection.find({"device_id": x_device_id}))
             
             if not user_files:
-                answer = "📄 Abhi koi file upload nahi hui hai. Pehle sidebar me '+' button se apni PDF, DOCX, TXT ya Image file upload karo, phir sawaal poochho!"
+                answer = "📄 No files have been uploaded yet. Use the '+' button in the sidebar to upload your PDF, DOCX, TXT, or Image file, then ask your question!"
             else:
                 processing = [f for f in user_files if f.get("status") == "processing"]
                 errored = [f for f in user_files if f.get("status") == "error"]
@@ -556,12 +556,12 @@ Answer:"""
                 
                 if processing:
                     pct = processing[0].get("progress", 0)
-                    answer = f"⏳ Aapki file abhi process ho rahi hai ({pct}% done). Thoda wait karo, jaise hi ready hogi, aap sawaal pooch sakte ho!"
+                    answer = f"⏳ Your file is still being processed ({pct}% done). Please wait a moment — you can ask questions once it's ready!"
                 elif errored and not ready:
                     err_msg = errored[0].get("error_message", "Unknown error")
-                    answer = f"❌ File processing me error aa gayi thi: {err_msg}\n\nPlease file delete karke dobara upload karo."
+                    answer = f"❌ File processing failed: {err_msg}\n\nPlease delete the file and try uploading it again."
                 else:
-                    answer = "🔍 Aapki file upload ho chuki hai, lekin is sawaal se related koi information nahi mili. Thoda alag tareeqe se sawaal poochho ya doosra topic try karo!"
+                    answer = "🔍 Your file has been uploaded, but no relevant information was found for this question. Try rephrasing your question or asking about a different topic!"
             
             messages_collection.insert_one({
                 "session_id": session_id,
