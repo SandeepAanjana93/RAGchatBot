@@ -8,6 +8,7 @@ import os
 import io
 import base64
 from datetime import datetime
+import re
 import pdfplumber
 import docx
 from pdf2image import convert_from_bytes
@@ -59,6 +60,7 @@ chroma_client = chromadb.PersistentClient(path="chroma_db")
 collection = chroma_client.get_or_create_collection(name="documents")
 
 GEMINI_API_KEY = os.getenv("GROQ_API_KEY") or os.getenv("GEMINI_API_KEY")
+ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "supersecretadmin")
 
 
 @app.on_event("startup")
@@ -289,14 +291,54 @@ def extract_text(file_bytes: bytes, filename: str, progress_callback=None) -> st
 
 
 def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50):
-    words = text.split()
+    """Semantic chunking using paragraphs and sentences to preserve meaning."""
+    paragraphs = re.split(r'\n\s*\n', text)
     chunks = []
-    i = 0
-    while i < len(words):
-        chunk = " ".join(words[i:i + chunk_size])
-        chunks.append(chunk)
-        i += chunk_size - overlap
-    return chunks
+    current_chunk = ""
+    current_words = 0
+    
+    for p in paragraphs:
+        p = p.strip()
+        if not p:
+            continue
+            
+        p_words = len(p.split())
+        
+        if current_words + p_words > chunk_size and current_chunk:
+            chunks.append(current_chunk.strip())
+            # Overlap handling (take last N sentences that fit in overlap)
+            sentences = re.split(r'(?<=[.!?])\s+', current_chunk)
+            overlap_text = ""
+            overlap_words = 0
+            for s in reversed(sentences):
+                s_words = len(s.split())
+                if overlap_words + s_words > overlap and overlap_text:
+                    break
+                overlap_text = s + " " + overlap_text
+                overlap_words += s_words
+                
+            current_chunk = overlap_text.strip()
+            current_words = overlap_words
+            
+        current_chunk += "\n\n" + p if current_chunk else p
+        current_words += p_words
+        
+    if current_chunk:
+        chunks.append(current_chunk.strip())
+        
+    # Fallback for huge paragraphs without newlines
+    final_chunks = []
+    for c in chunks:
+        words = c.split()
+        if len(words) > chunk_size + 100:
+            i = 0
+            while i < len(words):
+                final_chunks.append(" ".join(words[i:i + chunk_size]))
+                i += chunk_size - overlap
+        else:
+            final_chunks.append(c)
+            
+    return final_chunks
 
 
 @app.get("/")
@@ -305,7 +347,9 @@ def read_root():
 
 
 @app.get("/clear-all-data")
-def clear_all_data():
+def clear_all_data(admin_token: str = Header(None)):
+    if admin_token != ADMIN_TOKEN:
+        raise HTTPException(status_code=403, detail="Forbidden: Invalid admin token")
     global collection
     # Clear MongoDB Collections
     db.drop_collection("files_metadata")
@@ -488,11 +532,13 @@ def get_session_messages(session_id: str, x_device_id: str = Header(...)):
 class ChatRequest(BaseModel):
     session_id: str
     question: str
+    file_id: str = None  # Optional file_id for per-file filtering
 
 @app.post("/chat")
 async def chat(request: ChatRequest, x_device_id: str = Header(...)):
     question = request.question
     session_id = request.session_id
+    file_id = request.file_id
 
     session_doc = sessions_collection.find_one({"_id": ObjectId(session_id), "device_id": x_device_id})
     if not session_doc:
@@ -515,14 +561,56 @@ async def chat(request: ChatRequest, x_device_id: str = Header(...)):
             {"$set": {"title": title}}
         )
 
-    # ChromaDB se relevant chunks nikaalo
+    # Multi-turn Query Rewriting
+    past_messages = list(messages_collection.find({"session_id": session_id}).sort("timestamp", -1).limit(6))
+    past_messages.reverse() # chronological order
+    
+    search_query = question
+    if len(past_messages) > 1:
+        # Ask Gemini to rewrite the query
+        history_text = "\n".join([f"{m['sender']}: {m['text']}" for m in past_messages[:-1]])
+        rewrite_prompt = f"""Given the following chat history and the user's latest question, rewrite the latest question into a standalone query that includes all necessary context from the history. If it is already standalone, return it as is. Do not answer the question, just rewrite it.
+History:
+{history_text}
+Latest Question: {question}
+Standalone Query:"""
+        try:
+            gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key={GEMINI_API_KEY}"
+            payload = {"contents": [{"parts": [{"text": rewrite_prompt}]}]}
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                res = await client.post(gemini_url, json=payload, headers={"Content-Type": "application/json"})
+                if res.status_code == 200:
+                    data = res.json()
+                    if "candidates" in data and data["candidates"]:
+                        rewritten = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                        if rewritten:
+                            search_query = rewritten
+        except Exception as e:
+            print("Query rewrite failed:", e)
+
+    # ChromaDB query with per-file filtering
+    where_clause = {"device_id": x_device_id}
+    if file_id:
+        where_clause = {"$and": [{"device_id": x_device_id}, {"file_id": file_id}]}
+
     results = collection.query(
-        query_texts=[question],
-        n_results=5,
-        where={"device_id": x_device_id}
+        query_texts=[search_query],
+        n_results=10,
+        where=where_clause
     )
 
-    relevant_chunks = results["documents"][0] if results["documents"] else []
+    # Similarity Score Filtering & Context building with Citation
+    relevant_chunks = []
+    if results["documents"] and results["documents"][0]:
+        for idx, doc in enumerate(results["documents"][0]):
+            distance = results["distances"][0][idx]
+            metadata = results["metadatas"][0][idx]
+            filename = metadata.get("filename", "Unknown File")
+            
+            # Distance threshold (lower is better for L2). Usually < 1.3 is good.
+            if distance < 1.3:
+                relevant_chunks.append(f"[Source: {filename}]\n{doc}")
+
     context = "\n\n---\n\n".join(relevant_chunks)
 
     # Prompt banao
@@ -531,7 +619,7 @@ async def chat(request: ChatRequest, x_device_id: str = Header(...)):
 STRICT RULES:
 1. Answer ONLY based on what is written in the "Context" below.
 2. Do NOT use any outside or general knowledge.
-3. If the user asks about code, security, passwords, or encryption, carefully look for code snippets (like 'def', 'hashlib', 'pbkdf2', 'salt') in the context and provide them EXACTLY as they appear. Do not explain, just give the code.
+3. Every piece of context starts with [Source: filename]. You MUST append the source filename at the end of your answer, formatted exactly as: "Source: filename". If you combine multiple sources, list them all.
 4. If the answer is not found in the Context, clearly state: "This information was not found in the uploaded file."
 
 Context:

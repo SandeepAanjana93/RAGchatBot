@@ -38,6 +38,7 @@ export default function Home() {
   const [thinking, setThinking] = useState(false);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [darkMode, setDarkMode] = useState(false);
@@ -232,7 +233,7 @@ export default function Home() {
       const res = await fetch("https://file-chatbot.onrender.com/chat", {
         method: "POST",
         headers: getHeaders(true),
-        body: JSON.stringify({ session_id: activeSessionId, question: questionText }),
+        body: JSON.stringify({ session_id: activeSessionId, question: questionText, file_id: selectedFileId }),
       });
 
       if (!res.ok) throw new Error("Chat request failed");
@@ -674,6 +675,26 @@ export default function Home() {
 
         {/* Input Area */}
         <div className="px-6 pb-5 pt-2">
+          {uploadedFiles.length > 0 && (
+            <div className="max-w-3xl mx-auto mb-2 flex justify-end">
+              <select
+                value={selectedFileId || ""}
+                onChange={(e) => setSelectedFileId(e.target.value || null)}
+                className={`text-xs px-3 py-1.5 rounded-lg outline-none transition-all cursor-pointer ${
+                  darkMode 
+                    ? 'bg-[#1E1E2E] border border-white/10 text-gray-300 hover:border-white/20' 
+                    : 'bg-white border border-[#EBEBEF] text-gray-600 hover:border-gray-300'
+                }`}
+              >
+                <option value="">All Files</option>
+                {uploadedFiles.map(f => (
+                  <option key={f.file_id} value={f.file_id}>
+                    {f.filename}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <form 
             onSubmit={(e) => { e.preventDefault(); handleSend(); }}
             className={`max-w-3xl w-full mx-auto flex items-center gap-3 rounded-2xl px-4 py-2 shadow-sm focus-within:border-[#E91E8C]/50 focus-within:shadow-[0_0_0_4px_rgba(233,30,140,0.08)] transition-all ${darkMode ? 'bg-[#1E1E2E] border border-white/10' : 'bg-white border border-[#EBEBEF]'}`}
