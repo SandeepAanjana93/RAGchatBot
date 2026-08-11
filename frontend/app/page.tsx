@@ -149,8 +149,9 @@ export default function Home() {
   const fetchFiles = async () => {
     try {
       const res = await fetch("https://file-chatbot.onrender.com/files", { headers: getHeaders() });
+      if (!res.ok) return;
       const data = await res.json();
-      setUploadedFiles(data.files);
+      setUploadedFiles(data.files || []);
     } catch (err) {
       console.error(err);
     }
@@ -159,9 +160,11 @@ export default function Home() {
   const fetchSessions = async () => {
     try {
       const res = await fetch("https://file-chatbot.onrender.com/chats", { headers: getHeaders() });
+      if (!res.ok) return [];
       const data = await res.json();
-      setSessions(data.sessions);
-      return data.sessions as ChatSession[];
+      const s = data.sessions || [];
+      setSessions(s);
+      return s as ChatSession[];
     } catch (err) {
       console.error(err);
       return [];
@@ -171,8 +174,9 @@ export default function Home() {
   const fetchSessionMessages = async (sessionId: string) => {
     try {
       const res = await fetch(`https://file-chatbot.onrender.com/chats/${sessionId}/messages`, { headers: getHeaders() });
+      if (!res.ok) return;
       const data = await res.json();
-      setMessages(data.messages);
+      setMessages(data.messages || []);
     } catch (err) {
       console.error(err);
     }
