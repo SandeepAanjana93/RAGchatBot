@@ -615,13 +615,13 @@ Standalone Query:"""
     context = "\n\n---\n\n".join(relevant_chunks)
 
     # Prompt banao
-    prompt = f"""You are a document assistant. The "Context" provided below is your ONLY source of knowledge.
+    prompt = f"""You are a helpful document assistant. The "Context" provided below is your primary source of knowledge.
 
 STRICT RULES:
-1. Answer ONLY based on what is written in the "Context" below.
-2. Do NOT use any outside or general knowledge.
-3. Every piece of context starts with [Source: filename]. You MUST append the source filename at the end of your answer, formatted exactly as: "Source: filename". If you combine multiple sources, list them all.
-4. If the answer is not found in the Context, clearly state: "This information was not found in the uploaded file."
+1. If the user is just saying hello, greeting you, or asking who/what you are, introduce yourself politely as an AI Document Assistant.
+2. For all other factual or analytical questions, answer ONLY based on what is written in the "Context" below. Do NOT use outside knowledge.
+3. Every piece of context starts with [Source: filename]. If you use information from the context, you MUST append the source filename at the end of your answer, formatted exactly as: "Source: filename".
+4. If the question requires information from the documents but the Context is empty or doesn't contain the answer, clearly state: "This information was not found in the uploaded file."
 
 Context:
 {context}
@@ -632,33 +632,32 @@ Answer:"""
 
     # Streaming generator
     async def generate():
-        if not context:
-            # Check WHY there's no context — is it no files, still processing, or extraction error?
-            user_files = list(files_collection.find({"device_id": x_device_id}))
+        # Check system state (files processing, empty, etc.)
+        user_files = list(files_collection.find({"device_id": x_device_id}))
+        ready = [f for f in user_files if f.get("status") == "ready"]
+        
+        system_error_answer = None
+        if not user_files:
+            system_error_answer = "📄 No files have been uploaded yet. Use the '+' button in the sidebar to upload your PDF, DOCX, TXT, or Image file, then ask your question!"
+        elif not ready:
+            processing = [f for f in user_files if f.get("status") == "processing"]
+            errored = [f for f in user_files if f.get("status") == "error"]
             
-            if not user_files:
-                answer = "📄 No files have been uploaded yet. Use the '+' button in the sidebar to upload your PDF, DOCX, TXT, or Image file, then ask your question!"
-            else:
-                processing = [f for f in user_files if f.get("status") == "processing"]
-                errored = [f for f in user_files if f.get("status") == "error"]
-                ready = [f for f in user_files if f.get("status") == "ready"]
+            if processing:
+                pct = processing[0].get("progress", 0)
+                system_error_answer = f"⏳ Your file is still being processed ({pct}% done). Please wait a moment — you can ask questions once it's ready!"
+            elif errored:
+                err_msg = errored[0].get("error_message", "Unknown error")
+                system_error_answer = f"❌ File processing failed: {err_msg}\n\nPlease delete the file and try uploading it again."
                 
-                if processing:
-                    pct = processing[0].get("progress", 0)
-                    answer = f"⏳ Your file is still being processed ({pct}% done). Please wait a moment — you can ask questions once it's ready!"
-                elif errored and not ready:
-                    err_msg = errored[0].get("error_message", "Unknown error")
-                    answer = f"❌ File processing failed: {err_msg}\n\nPlease delete the file and try uploading it again."
-                else:
-                    answer = "🔍 Your file has been uploaded, but no relevant information was found for this question. Try rephrasing your question or asking about a different topic!"
-            
+        if system_error_answer:
             messages_collection.insert_one({
                 "session_id": session_id,
                 "sender": "ai",
-                "text": answer,
+                "text": system_error_answer,
                 "timestamp": datetime.utcnow()
             })
-            yield f"data: {json.dumps({'token': answer})}\n\n"
+            yield f"data: {json.dumps({'token': system_error_answer})}\n\n"
             yield f"data: {json.dumps({'done': True})}\n\n"
             return
 
