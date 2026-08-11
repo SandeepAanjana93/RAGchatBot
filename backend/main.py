@@ -502,7 +502,25 @@ Answer:"""
     # Streaming generator
     async def generate():
         if not context:
-            answer = "No files have been uploaded or no relevant information was found. Please upload a file first."
+            # Check WHY there's no context — is it no files, still processing, or extraction error?
+            user_files = list(files_collection.find({"device_id": x_device_id}))
+            
+            if not user_files:
+                answer = "📄 Abhi koi file upload nahi hui hai. Pehle sidebar me '+' button se apni PDF, DOCX, TXT ya Image file upload karo, phir sawaal poochho!"
+            else:
+                processing = [f for f in user_files if f.get("status") == "processing"]
+                errored = [f for f in user_files if f.get("status") == "error"]
+                ready = [f for f in user_files if f.get("status") == "ready"]
+                
+                if processing:
+                    pct = processing[0].get("progress", 0)
+                    answer = f"⏳ Aapki file abhi process ho rahi hai ({pct}% done). Thoda wait karo, jaise hi ready hogi, aap sawaal pooch sakte ho!"
+                elif errored and not ready:
+                    err_msg = errored[0].get("error_message", "Unknown error")
+                    answer = f"❌ File processing me error aa gayi thi: {err_msg}\n\nPlease file delete karke dobara upload karo."
+                else:
+                    answer = "🔍 Aapki file upload ho chuki hai, lekin is sawaal se related koi information nahi mili. Thoda alag tareeqe se sawaal poochho ya doosra topic try karo!"
+            
             messages_collection.insert_one({
                 "session_id": session_id,
                 "sender": "ai",
