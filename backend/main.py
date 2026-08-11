@@ -153,14 +153,15 @@ def reindex_chromadb_on_startup():
             pass
 
         # Re-chunk and re-add
-        chunks = chunk_text(extracted_text)
-        if chunks:
-            ids = [f"{file_id}_chunk_{i}" for i in range(len(chunks))]
-            metadatas = [{"filename": filename, "file_id": file_id, "chunk_index": i, "device_id": device_id} for i in range(len(chunks))]
+        chunks_data = chunk_text(extracted_text)
+        if chunks_data:
+            chunks_text = [c["text"] for c in chunks_data]
+            ids = [f"{file_id}_chunk_{i}" for i in range(len(chunks_text))]
+            metadatas = [{"filename": filename, "file_id": file_id, "chunk_index": i, "device_id": device_id, "page_num": c["page"]} for i, c in enumerate(chunks_data)]
             try:
-                collection.add(documents=chunks, ids=ids, metadatas=metadatas)
+                collection.add(documents=chunks_text, ids=ids, metadatas=metadatas)
                 reindexed += 1
-                print(f"🔄 Re-indexed: {filename} ({len(chunks)} chunks)")
+                print(f"🔄 Re-indexed: {filename} ({len(chunks_data)} chunks)")
             except Exception as e:
                 print(f"❌ Re-index failed for {filename}: {e}")
 
