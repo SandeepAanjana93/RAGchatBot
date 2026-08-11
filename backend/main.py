@@ -462,16 +462,6 @@ async def chat(request: ChatRequest, x_device_id: str = Header(...)):
     relevant_chunks = results["documents"][0] if results["documents"] else []
     context = "\n\n---\n\n".join(relevant_chunks)
 
-    if not context:
-        answer = "No files have been uploaded or no relevant information was found. Please upload a file first."
-        messages_collection.insert_one({
-            "session_id": session_id,
-            "sender": "ai",
-            "text": answer,
-            "timestamp": datetime.utcnow()
-        })
-        return {"answer": answer}
-
     # Prompt banao
     prompt = f"""You are a document assistant. The "Context" provided below is your ONLY source of knowledge.
 
@@ -490,6 +480,18 @@ Answer:"""
 
     # Streaming generator
     async def generate():
+        if not context:
+            answer = "No files have been uploaded or no relevant information was found. Please upload a file first."
+            messages_collection.insert_one({
+                "session_id": session_id,
+                "sender": "ai",
+                "text": answer,
+                "timestamp": datetime.utcnow()
+            })
+            yield f"data: {json.dumps({'token': answer})}\n\n"
+            yield f"data: {json.dumps({'done': True})}\n\n"
+            return
+
         full_answer = ""
         try:
             gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:streamGenerateContent?alt=sse&key={GEMINI_API_KEY}"
