@@ -220,6 +220,8 @@ export default function Home() {
 
   useEffect(() => {
     const init = async () => {
+      if (!localStorage.getItem("token")) return;
+      
       // Ensure deviceId exists before fetching
       if (!localStorage.getItem("deviceId")) {
         localStorage.setItem("deviceId", crypto.randomUUID());
@@ -227,7 +229,7 @@ export default function Home() {
       await fetchFiles();
       const existingSessions = await fetchSessions();
 
-      if (existingSessions.length > 0) {
+      if (existingSessions && existingSessions.length > 0) {
         setActiveSessionId(existingSessions[0].session_id);
         await fetchSessionMessages(existingSessions[0].session_id);
       } else {
@@ -235,7 +237,7 @@ export default function Home() {
       }
     };
     init();
-  }, []);
+  }, [token]);
 
   // Polls file processing status until it becomes "ready" or "error"
   const pollFileStatus = (fileId: string) => {
