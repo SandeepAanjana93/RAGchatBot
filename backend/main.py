@@ -4,6 +4,7 @@ from fastapi.responses import StreamingResponse
 import httpx
 import json
 from pydantic import BaseModel
+from typing import Optional
 import os
 import io
 import base64
@@ -532,7 +533,7 @@ def get_session_messages(session_id: str, x_device_id: str = Header(...)):
 class ChatRequest(BaseModel):
     session_id: str
     question: str
-    file_id: str = None  # Optional file_id for per-file filtering
+    file_id: Optional[str] = None  # Optional file_id for per-file filtering
 
 @app.post("/chat")
 async def chat(request: ChatRequest, x_device_id: str = Header(...)):
