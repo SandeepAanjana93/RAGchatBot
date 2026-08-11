@@ -525,6 +525,11 @@ Answer:"""
 
             async with httpx.AsyncClient(timeout=60.0) as client:
                 async with client.stream("POST", gemini_url, json=payload, headers={"Content-Type": "application/json"}) as response:
+                    if response.status_code != 200:
+                        await response.aread()
+                        error_text = response.text
+                        raise Exception(f"Gemini API Error ({response.status_code}): {error_text}")
+
                     async for line in response.aiter_lines():
                         if line.startswith("data: "):
                             data_str = line[6:]
@@ -538,8 +543,19 @@ Answer:"""
                                         token = parts[0]["text"]
                                         full_answer += token
                                         yield f"data: {json.dumps({'token': token})}\n\n"
+                                    else:
+                                        # Handle safety block or empty parts
+                                        finish_reason = data["candidates"][0].get("finishReason", "")
+                                        if finish_reason:
+                                            blocked_msg = f"\n\n[Response blocked by AI safety filters: {finish_reason}]"
+                                            full_answer += blocked_msg
+                                            yield f"data: {json.dumps({'token': blocked_msg})}\n\n"
                             except:
                                 continue
+
+            if not full_answer.strip():
+                full_answer = "Sorry, the AI returned an empty response. It might have been blocked by safety filters or an internal error occurred."
+                yield f"data: {json.dumps({'token': full_answer})}\n\n"
 
             # Final answer MongoDB mein save karo
             messages_collection.insert_one({
