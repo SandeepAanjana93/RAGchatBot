@@ -76,15 +76,36 @@ def pil_image_to_base64(pil_image: Image.Image) -> str:
     return base64.b64encode(buffered.getvalue()).decode("utf-8")
 
 
-def run_ocr(pil_image: Image.Image) -> str:
+def run_ocr(pil_image):
     try:
-        # Pytesseract works better on code screenshots when not adaptively thresholded
-        # Just convert to grayscale to improve Tesseract accuracy slightly
-        gray = pil_image.convert('L')
-        text = pytesseract.image_to_string(gray)
-        return text.strip()
+        # Convert PIL image to base64
+        buffered = io.BytesIO()
+        pil_image.save(buffered, format="PNG")
+        img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
+
+        gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+        payload = {
+            "contents": [{
+                "parts": [
+                    {"text": "Extract all text, code, and tables from this image exactly as written. Do not explain, just return the extracted text."},
+                    {
+                        "inlineData": {
+                            "mimeType": "image/png",
+                            "data": img_str
+                        }
+                    }
+                ]
+            }]
+        }
+        
+        response = requests.post(gemini_url, json=payload, headers={"Content-Type": "application/json"}, timeout=30)
+        result = response.json()
+        if "candidates" in result and result["candidates"]:
+            text = result["candidates"][0].get("content", {}).get("parts", [{}])[0].get("text", "")
+            return text.strip()
+        return ""
     except Exception as e:
-        print("Tesseract Error:", e)
+        print("Gemini OCR Error:", e)
         return ""
 
 
