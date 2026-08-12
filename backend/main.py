@@ -152,18 +152,14 @@ def reindex_chromadb_on_startup():
         except Exception:
             pass
 
-        # Re-chunk and re-add
-        chunks_data = chunk_text(extracted_text)
-        if chunks_data:
-            chunks_text = [c["text"] for c in chunks_data]
-            ids = [f"{file_id}_chunk_{i}" for i in range(len(chunks_text))]
-            metadatas = [{"filename": filename, "file_id": file_id, "chunk_index": i, "device_id": device_id, "page_num": c["page"]} for i, c in enumerate(chunks_data)]
-            try:
-                collection.add(documents=chunks_text, ids=ids, metadatas=metadatas)
+        # Re-chunk and re-add (same helper jo upload ke waqt use hota hai)
+        try:
+            chunks_created = index_chunks_to_chroma(file_id, filename, device_id, extracted_text)
+            if chunks_created:
                 reindexed += 1
-                print(f"🔄 Re-indexed: {filename} ({len(chunks_data)} chunks)")
-            except Exception as e:
-                print(f"❌ Re-index failed for {filename}: {e}")
+                print(f"🔄 Re-indexed: {filename} ({chunks_created} chunks)")
+        except Exception as e:
+            print(f"❌ Re-index failed for {filename}: {e}")
 
     print(f"✅ Startup re-index complete. {reindexed}/{len(ready_files)} files re-indexed.")
 
@@ -438,6 +434,38 @@ def clear_all_data(admin_token: str = Header(None)):
     return {"message": "All data (Files, Chats, ChromaDB) has been completely wiped. You can now start fresh."}
 
 
+def compute_text_length(extracted) -> int:
+    """extracted PDF/DOCX/image ke liye pages ki list hoti hai, TXT ke liye plain string.
+    Dono cases me total character count nikalta hai."""
+    if isinstance(extracted, str):
+        return len(extracted)
+    return sum(len(p.get("text", "")) for p in extracted)
+
+
+def index_chunks_to_chroma(file_id: str, filename: str, device_id: str, extracted) -> int:
+    """Chunking + embedding ka shared logic — upload aur startup reindex, dono isi se guzarte hain
+    taaki dono jagah same (sahi) format use ho."""
+    chunks_data = chunk_text(extracted)
+    if not chunks_data:
+        return 0
+
+    chunks_text = [c["text"] for c in chunks_data]
+    ids = [f"{file_id}_chunk_{i}" for i in range(len(chunks_text))]
+    metadatas = [
+        {
+            "filename": filename,
+            "file_id": file_id,
+            "chunk_index": i,
+            "device_id": device_id,
+            "page_num": c["page"],
+        }
+        for i, c in enumerate(chunks_data)
+    ]
+    # ChromaDB ka default embedding function use ho raha hai (RAM bachane ke liye)
+    collection.add(documents=chunks_text, ids=ids, metadatas=metadatas)
+    return len(chunks_data)
+
+
 def process_file_background(file_id: str, file_bytes: bytes, filename: str, device_id: str):
     def update_progress(percent):
         files_collection.update_one(
@@ -446,23 +474,17 @@ def process_file_background(file_id: str, file_bytes: bytes, filename: str, devi
         )
 
     try:
-        extracted_text = extract_text(file_bytes, filename, progress_callback=update_progress)
-        chunks = chunk_text(extracted_text)
-
-        if chunks:
-            ids = [f"{file_id}_chunk_{i}" for i in range(len(chunks))]
-            metadatas = [{"filename": filename, "file_id": file_id, "chunk_index": i, "device_id": device_id} for i in range(len(chunks))]
-            # Using ChromaDB's default embedding function to save RAM
-            collection.add(documents=chunks, ids=ids, metadatas=metadatas)
+        extracted = extract_text(file_bytes, filename, progress_callback=update_progress)
+        chunks_created = index_chunks_to_chroma(file_id, filename, device_id, extracted)
 
         files_collection.update_one(
             {"_id": ObjectId(file_id)},
             {"$set": {
-                "extracted_text": extracted_text,
+                "extracted_text": extracted,
                 "status": "ready",
                 "progress": 100,
-                "text_length": len(extracted_text),
-                "chunks_created": len(chunks)
+                "text_length": compute_text_length(extracted),
+                "chunks_created": chunks_created
             }}
         )
     except Exception as e:
