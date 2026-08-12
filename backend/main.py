@@ -190,7 +190,7 @@ def run_ocr(pil_image):
         pil_image.save(buffered, format="PNG")
         img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
 
-        gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+        gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key={GEMINI_API_KEY}"
         payload = {
             "contents": [{
                 "parts": [
@@ -645,7 +645,7 @@ History:
 Latest Question: {question}
 Standalone Query:"""
         try:
-            gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+            gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key={GEMINI_API_KEY}"
             payload = {"contents": [{"parts": [{"text": rewrite_prompt}]}]}
             async with httpx.AsyncClient(timeout=10.0) as client:
                 res = await client.post(gemini_url, json=payload, headers={"Content-Type": "application/json"})
@@ -731,7 +731,7 @@ Answer:"""
 
         full_answer = ""
         try:
-            gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:streamGenerateContent?alt=sse&key={GEMINI_API_KEY}"
+            gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:streamGenerateContent?alt=sse&key={GEMINI_API_KEY}"
             
             payload = {
                 "contents": [{
