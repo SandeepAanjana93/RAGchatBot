@@ -268,7 +268,22 @@ export default function Home() {
   };
 
   const handleSend = async () => {
-    if (!input.trim() || !activeSessionId) return;
+    if (!input.trim()) return;
+    
+    let currentSessionId = activeSessionId;
+    if (!currentSessionId) {
+      // Auto-create a session if none is active
+      try {
+        const res = await fetch("https://file-chatbot.onrender.com/chats", { method: "POST", headers: getHeaders() });
+        const data = await res.json();
+        currentSessionId = data.session_id;
+        setActiveSessionId(currentSessionId);
+        await fetchSessions();
+      } catch (err) {
+        console.error("Failed to create new session", err);
+        return;
+      }
+    }
 
     const userMsg: ChatMessage = { sender: "user", text: input };
     setMessages((prev) => [...prev, userMsg]);
@@ -280,7 +295,7 @@ export default function Home() {
       const res = await fetch("https://file-chatbot.onrender.com/chat", {
         method: "POST",
         headers: getHeaders(true),
-        body: JSON.stringify({ session_id: activeSessionId, question: questionText, file_id: selectedFileId }),
+        body: JSON.stringify({ session_id: currentSessionId, question: questionText, file_id: selectedFileId }),
       });
 
       if (!res.ok) throw new Error("Chat request failed");
