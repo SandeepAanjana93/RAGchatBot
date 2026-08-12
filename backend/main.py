@@ -271,61 +271,7 @@ def process_single_page(args):
     return page_num, combined
 
 
-def extract_text_from_pdf_gemini(file_bytes: bytes, progress_callback=None) -> list:
-    """PRIMARY: Gemini se seedha PDF ka text nikalo — 2M token context, native PDF support.
-    Ek hi API call mein poora text aa jaata hai, bahut fast!"""
-    try:
-        pdf_base64 = base64.b64encode(file_bytes).decode("utf-8")
-        
-        if progress_callback:
-            progress_callback(10)
-        
-        gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key={GEMINI_API_KEY}"
-        payload = {
-            "contents": [{
-                "parts": [
-                    {"text": "Extract ALL text content from this PDF document. Include all headings, paragraphs, tables, lists, captions, and any other textual content. Maintain the original structure and formatting as much as possible. For tables, format them with | separators. Do not summarize or skip any content — extract everything exactly as written. Return ONLY the extracted text, no explanations."},
-                    {
-                        "inlineData": {
-                            "mimeType": "application/pdf",
-                            "data": pdf_base64
-                        }
-                    }
-                ]
-            }],
-            "generationConfig": {
-                "maxOutputTokens": 65536
-            }
-        }
-
-        if progress_callback:
-            progress_callback(20)
-        
-        response = requests.post(gemini_url, json=payload, headers={"Content-Type": "application/json"}, timeout=120)
-        
-        if progress_callback:
-            progress_callback(80)
-        
-        if response.status_code == 200:
-            result = response.json()
-            if "candidates" in result and result["candidates"]:
-                text = result["candidates"][0].get("content", {}).get("parts", [{}])[0].get("text", "")
-                if text and len(text.strip()) > 50:
-                    print(f"✅ Gemini PDF extraction successful: {len(text)} chars")
-                    if progress_callback:
-                        progress_callback(100)
-                    return [{"page": 1, "text": text.strip()}]
-        
-        print(f"⚠️ Gemini PDF extraction returned status {response.status_code}, falling back to pdfplumber")
-        return None
-        
-    except Exception as e:
-        print(f"⚠️ Gemini PDF extraction failed: {e}, falling back to pdfplumber")
-        return None
-
-
-def extract_text_from_pdf_pdfplumber(file_bytes: bytes, progress_callback=None) -> list:
-    """FALLBACK: Pdfplumber + OCR pipeline — sirf tab use hota hai jab Gemini fail ho."""
+def extract_text_from_pdf(file_bytes: bytes, progress_callback=None) -> str:
     page_data = []
 
     with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
@@ -356,9 +302,11 @@ def extract_text_from_pdf_pdfplumber(file_bytes: bytes, progress_callback=None) 
             has_no_text = len(combined) < 20
 
             # OCR sirf tab karo jab page mein text hi nahi hai
+            # Agar pdfplumber ne text nikal liya (50+ chars), toh images decorative hain — OCR skip karo
             if has_no_text:
                 needs_ocr = True
             elif len(combined) < 50 and len(boxes) > 0:
+                # Very little text + has images — probably scanned page
                 needs_ocr = True
             else:
                 needs_ocr = False
@@ -373,6 +321,7 @@ def extract_text_from_pdf_pdfplumber(file_bytes: bytes, progress_callback=None) 
         if ocr_page_indices:
             print(f"🔍 OCR needed for {len(ocr_page_indices)}/{total_pages} pages: {[p+1 for p in ocr_page_indices]}")
             try:
+                # Single call with first_page to last_page covering the range
                 first_p = min(ocr_page_indices) + 1
                 last_p = max(ocr_page_indices) + 1
                 if POPPLER_PATH:
@@ -381,6 +330,7 @@ def extract_text_from_pdf_pdfplumber(file_bytes: bytes, progress_callback=None) 
                 else:
                     all_range_images = convert_from_bytes(file_bytes, dpi=100,
                                                          first_page=first_p, last_page=last_p)
+                # Map back to original page indices
                 for page_idx in ocr_page_indices:
                     img_index = page_idx - (first_p - 1)
                     if 0 <= img_index < len(all_range_images):
@@ -414,18 +364,6 @@ def extract_text_from_pdf_pdfplumber(file_bytes: bytes, progress_callback=None) 
         # Original page order me wapas jodo (keep page mapping)
         pages_data = [{"page": i+1, "text": results.get(i, "")} for i in range(total_pages)]
         return pages_data
-
-
-def extract_text_from_pdf(file_bytes: bytes, progress_callback=None) -> list:
-    """Smart extraction: Pehle Gemini try karo (fast, 2M tokens), fail ho toh pdfplumber fallback."""
-    # Try Gemini first — single API call, bahut fast
-    result = extract_text_from_pdf_gemini(file_bytes, progress_callback)
-    if result:
-        return result
-    
-    # Fallback to pdfplumber + OCR pipeline
-    print("📄 Using pdfplumber fallback for PDF extraction...")
-    return extract_text_from_pdf_pdfplumber(file_bytes, progress_callback)
 
 
 def extract_images_from_docx(file_bytes: bytes):
