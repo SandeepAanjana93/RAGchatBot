@@ -291,22 +291,16 @@ def extract_text_from_pdf(file_bytes: bytes, progress_callback=None) -> str:
             combined = (page_text + "\n" + table_text).strip()
             
             boxes = []
-            if len(page.images) > 0:
-                for img in page.images:
-                    if (img["width"] * img["height"]) > (page.width * page.height * 0.01):
-                        boxes.append({
-                            'x0': img['x0'], 'top': img['top'], 'x1': img['x1'], 'bottom': img['bottom'],
-                            'page_width': float(page.width), 'page_height': float(page.height)
-                        })
+            if images_in_page:
+                for img in images_in_page:
+                    if 'x0' in img and 'top' in img and 'x1' in img and 'bottom' in img:
+                        boxes.append(img)
 
             has_no_text = len(combined) < 20
 
-            # OCR sirf tab karo jab page mein text hi nahi hai
-            # Agar pdfplumber ne text nikal liya (50+ chars), toh images decorative hain — OCR skip karo
             if has_no_text:
                 needs_ocr = True
             elif len(combined) < 50 and len(boxes) > 0:
-                # Very little text + has images — probably scanned page
                 needs_ocr = True
             else:
                 needs_ocr = False
@@ -315,41 +309,16 @@ def extract_text_from_pdf(file_bytes: bytes, progress_callback=None) -> str:
             page_image_boxes.append(boxes if needs_ocr else [])
             page_data.append((page_text, table_text))
 
-        # Step 2: Convert ONLY the pages that need OCR — single batch call
-        ocr_images_map = {}
-        ocr_page_indices = [i for i, needs in enumerate(needs_ocr_flags) if needs]
-        if ocr_page_indices:
-            print(f"🔍 OCR needed for {len(ocr_page_indices)}/{total_pages} pages: {[p+1 for p in ocr_page_indices]}")
-            try:
-                # Single call with first_page to last_page covering the range
-                first_p = min(ocr_page_indices) + 1
-                last_p = max(ocr_page_indices) + 1
-                if POPPLER_PATH:
-                    all_range_images = convert_from_bytes(file_bytes, poppler_path=POPPLER_PATH, dpi=100,
-                                                         first_page=first_p, last_page=last_p)
-                else:
-                    all_range_images = convert_from_bytes(file_bytes, dpi=100,
-                                                         first_page=first_p, last_page=last_p)
-                # Map back to original page indices
-                for page_idx in ocr_page_indices:
-                    img_index = page_idx - (first_p - 1)
-                    if 0 <= img_index < len(all_range_images):
-                        ocr_images_map[page_idx] = all_range_images[img_index]
-            except Exception as e:
-                print(f"❌ Batch image conversion failed: {e}")
-        else:
-            print(f"✅ No OCR needed — all {total_pages} pages have text")
-
-        # Step 3: Parallel OCR — 6 pages ek saath process honge
+        # Parallel OCR — memory save karne ke liye workers=1 rakha hai
         results = {}
         completed = 0
 
         tasks = [
-            (i, page_data[i][0], page_data[i][1], needs_ocr_flags[i], ocr_images_map.get(i), page_image_boxes[i])
+            (i, page_data[i][0], page_data[i][1], needs_ocr_flags[i], page_image_boxes[i])
             for i in range(total_pages)
         ]
 
-        with ThreadPoolExecutor(max_workers=6) as executor:
+        with ThreadPoolExecutor(max_workers=1) as executor:
             futures = {executor.submit(process_single_page, task): task[0] for task in tasks}
 
             for future in as_completed(futures):
@@ -361,7 +330,6 @@ def extract_text_from_pdf(file_bytes: bytes, progress_callback=None) -> str:
                     percent = int((completed / total_pages) * 100)
                     progress_callback(percent)
 
-        # Original page order me wapas jodo (keep page mapping)
         pages_data = [{"page": i+1, "text": results.get(i, "")} for i in range(total_pages)]
         return pages_data
 
@@ -411,7 +379,7 @@ def extract_text_from_docx(file_bytes: bytes, progress_callback=None) -> list:
     images = extract_images_from_docx(file_bytes)
     if images:
         completed = 0
-        with ThreadPoolExecutor(max_workers=6) as executor:
+        with ThreadPoolExecutor(max_workers=1) as executor:
             futures = [executor.submit(process_docx_image, img) for img in images]
             for future in as_completed(futures):
                 ocr_text = future.result()
