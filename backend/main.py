@@ -180,8 +180,22 @@ def pil_image_to_base64(pil_image: Image.Image) -> str:
 
 
 def run_ocr(pil_image):
+    """Hybrid OCR: pehle Tesseract try karo (free, local, unlimited).
+    Sirf tab Gemini Vision use karo jab Tesseract ka result bahut kam/khaali ho —
+    isse Gemini ki chhoti free quota bachi rehti hai."""
+    tesseract_text = ""
     try:
-        # Convert PIL image to base64
+        gray = pil_image.convert("L")
+        tesseract_text = pytesseract.image_to_string(gray).strip()
+    except Exception as e:
+        print("Tesseract Error:", e)
+
+    # Agar Tesseract ne decent text nikal liya, wahi use karo — Gemini call bachao
+    if len(tesseract_text) >= 15:
+        return tesseract_text
+
+    # Fallback: sirf tab Gemini Vision try karo jab Tesseract fail/khaali raha
+    try:
         buffered = io.BytesIO()
         pil_image.save(buffered, format="PNG")
         img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
@@ -200,16 +214,22 @@ def run_ocr(pil_image):
                 ]
             }]
         }
-        
+
         response = requests.post(gemini_url, json=payload, headers={"Content-Type": "application/json"}, timeout=30)
+
+        if response.status_code == 429:
+            # Gemini quota khatam — jo bhi Tesseract se mila usi pe guzara karo
+            print("Gemini OCR quota exceeded, falling back to Tesseract result")
+            return tesseract_text
+
         result = response.json()
         if "candidates" in result and result["candidates"]:
             text = result["candidates"][0].get("content", {}).get("parts", [{}])[0].get("text", "")
-            return text.strip()
-        return ""
+            return text.strip() or tesseract_text
+        return tesseract_text
     except Exception as e:
         print("Gemini OCR Error:", e)
-        return ""
+        return tesseract_text
 
 
 def process_single_page(args):
@@ -852,7 +872,11 @@ Answer:"""
             yield f"data: {json.dumps({'done': True})}\n\n"
 
         except Exception as e:
-            error_msg = "⚠️ An internal error occurred while processing your request. Please try again."
+            error_str = str(e)
+            if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str or "quota" in error_str.lower():
+                error_msg = "⏳ The AI service has hit its daily free-tier limit. Please try again in a few minutes, or later today once the quota resets."
+            else:
+                error_msg = "⚠️ An internal error occurred while processing your request. Please try again."
             print(f"System Error in chat: {e}")
             messages_collection.insert_one({
                 "session_id": session_id,
