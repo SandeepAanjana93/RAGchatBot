@@ -316,7 +316,37 @@ def extract_text_from_pdf(file_bytes: bytes, progress_callback=None) -> str:
         return pages_data
 
 
-def extract_text_from_docx(file_bytes: bytes) -> list:
+def extract_images_from_docx(file_bytes: bytes):
+    """DOCX ke andar embedded images (screenshots, diagrams, code snippets) nikalta hai"""
+    images = []
+    try:
+        doc = docx.Document(io.BytesIO(file_bytes))
+        for rel in doc.part.rels.values():
+            if "image" in rel.reltype:
+                try:
+                    image_bytes = rel.target_part.blob
+                    img = Image.open(io.BytesIO(image_bytes))
+                    images.append(img)
+                except Exception as e:
+                    print("DOCX image extract error:", e)
+    except Exception as e:
+        print("DOCX rels error:", e)
+    return images
+
+
+def process_docx_image(img):
+    """Ek DOCX image ko OCR karta hai — chhoti images (icons/bullets) skip karta hai"""
+    try:
+        if img.width * img.height < 40000:  # ~200x200 se chhoti images ignore
+            return ""
+        ocr_text = run_ocr(img.convert("RGB"))
+        return ocr_text.strip() if len(ocr_text.strip()) > 5 else ""
+    except Exception as e:
+        print("DOCX image OCR error:", e)
+        return ""
+
+
+def extract_text_from_docx(file_bytes: bytes, progress_callback=None) -> list:
     doc = docx.Document(io.BytesIO(file_bytes))
     text = ""
     for para in doc.paragraphs:
@@ -326,6 +356,22 @@ def extract_text_from_docx(file_bytes: bytes) -> list:
         for row in table.rows:
             row_text = " | ".join([cell.text for cell in row.cells])
             text += row_text + "\n"
+
+    # OCR fallback — DOCX ke andar embedded screenshots/diagrams bhi padho
+    images = extract_images_from_docx(file_bytes)
+    if images:
+        completed = 0
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            futures = [executor.submit(process_docx_image, img) for img in images]
+            for future in as_completed(futures):
+                ocr_text = future.result()
+                if ocr_text:
+                    text += "\n[IMAGE/CODE CONTENT]\n" + ocr_text
+                completed += 1
+                if progress_callback:
+                    percent = int((completed / len(images)) * 100)
+                    progress_callback(percent)
+
     return [{"page": 1, "text": text}]
 
 
@@ -340,7 +386,7 @@ def extract_text(file_bytes: bytes, filename: str, progress_callback=None) -> st
     if ext == "pdf":
         return extract_text_from_pdf(file_bytes, progress_callback)
     elif ext == "docx":
-        return extract_text_from_docx(file_bytes)
+        return extract_text_from_docx(file_bytes, progress_callback)
     elif ext == "txt":
         return file_bytes.decode("utf-8", errors="ignore")
     elif ext in ["jpg", "jpeg", "png"]:
