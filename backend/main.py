@@ -691,7 +691,7 @@ STRICT RULES:
 1. If the user is just saying hello, greeting you, or asking who/what you are, introduce yourself politely as an AI Document Assistant.
 2. For all other factual or analytical questions, answer ONLY based on what is written in the "Context" below. Do NOT use outside knowledge.
 3. Every piece of context starts with [Source: filename]. If you use information from the context, you MUST append the source filename at the end of your answer, formatted exactly as: "Source: filename".
-4. If the question requires information from the documents but the Context is empty or doesn't contain the answer, clearly state: "This information was not found in the uploaded file."
+4. If the question requires information from the documents but the Context is empty or doesn't contain the answer, clearly state: "This information was not found in the uploaded files. Please ensure you have uploaded the relevant document."
 
 Context:
 {context}
@@ -707,9 +707,7 @@ Answer:"""
         ready = [f for f in user_files if f.get("status") == "ready"]
         
         system_error_answer = None
-        if not user_files:
-            system_error_answer = "📄 No files have been uploaded yet. Use the '+' button in the sidebar to upload your PDF, DOCX, TXT, or Image file, then ask your question!"
-        elif not ready:
+        if user_files and not ready:
             processing = [f for f in user_files if f.get("status") == "processing"]
             errored = [f for f in user_files if f.get("status") == "error"]
             
