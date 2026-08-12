@@ -183,6 +183,13 @@ def run_ocr(pil_image):
     """Hybrid OCR: pehle Tesseract try karo (free, local, unlimited).
     Sirf tab Gemini Vision use karo jab Tesseract ka result bahut kam/khaali ho —
     isse Gemini ki chhoti free quota bachi rehti hai."""
+    # Resize large images to max 1500px before OCR — speed boost
+    max_dim = 1500
+    if pil_image.width > max_dim or pil_image.height > max_dim:
+        ratio = min(max_dim / pil_image.width, max_dim / pil_image.height)
+        new_size = (int(pil_image.width * ratio), int(pil_image.height * ratio))
+        pil_image = pil_image.resize(new_size, Image.LANCZOS)
+
     tesseract_text = ""
     try:
         gray = pil_image.convert("L")
@@ -298,19 +305,24 @@ def extract_text_from_pdf(file_bytes: bytes, progress_callback=None) -> str:
             page_image_boxes.append(boxes)
             page_data.append((page_text, table_text))
 
-        # Step 2: Convert only the pages that need OCR into images
+        # Step 2: Convert ONLY the pages that need OCR — one at a time (not all)
         ocr_images_map = {}
-        if any(needs_ocr_flags):
-            # Pass poppler_path only if it's set (Windows), else let it use system PATH (Linux)
-            if POPPLER_PATH:
-                all_images = convert_from_bytes(file_bytes, poppler_path=POPPLER_PATH, dpi=150)
-            else:
-                all_images = convert_from_bytes(file_bytes, dpi=150)
-            for i, needs in enumerate(needs_ocr_flags):
-                if needs and i < len(all_images):
-                    ocr_images_map[i] = all_images[i]
+        ocr_page_indices = [i for i, needs in enumerate(needs_ocr_flags) if needs]
+        if ocr_page_indices:
+            for page_idx in ocr_page_indices:
+                try:
+                    if POPPLER_PATH:
+                        imgs = convert_from_bytes(file_bytes, poppler_path=POPPLER_PATH, dpi=100,
+                                                 first_page=page_idx + 1, last_page=page_idx + 1)
+                    else:
+                        imgs = convert_from_bytes(file_bytes, dpi=100,
+                                                 first_page=page_idx + 1, last_page=page_idx + 1)
+                    if imgs:
+                        ocr_images_map[page_idx] = imgs[0]
+                except Exception as e:
+                    print(f"Page {page_idx + 1} image conversion failed: {e}")
 
-        # Step 3: Parallel OCR — 4 pages ek saath process honge (sequential se kaafi tez)
+        # Step 3: Parallel OCR — 6 pages ek saath process honge
         results = {}
         completed = 0
 
@@ -319,7 +331,7 @@ def extract_text_from_pdf(file_bytes: bytes, progress_callback=None) -> str:
             for i in range(total_pages)
         ]
 
-        with ThreadPoolExecutor(max_workers=4) as executor:
+        with ThreadPoolExecutor(max_workers=6) as executor:
             futures = {executor.submit(process_single_page, task): task[0] for task in tasks}
 
             for future in as_completed(futures):
@@ -381,7 +393,7 @@ def extract_text_from_docx(file_bytes: bytes, progress_callback=None) -> list:
     images = extract_images_from_docx(file_bytes)
     if images:
         completed = 0
-        with ThreadPoolExecutor(max_workers=4) as executor:
+        with ThreadPoolExecutor(max_workers=6) as executor:
             futures = [executor.submit(process_docx_image, img) for img in images]
             for future in as_completed(futures):
                 ocr_text = future.result()
