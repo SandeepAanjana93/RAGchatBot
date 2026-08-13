@@ -65,9 +65,9 @@ messages_collection = db["chat_messages"]
 from chromadb.api.types import Documents, EmbeddingFunction, Embeddings
 
 class GeminiRequestsEmbeddingFunction(EmbeddingFunction):
-    def __init__(self, api_key: str):
-        self.api_key = api_key
-        self.batch_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:batchEmbedContents?key={self.api_key}"
+    def __init__(self, api_keys: list):
+        self.api_keys = api_keys
+        self.current_key_idx = 0
 
     def __call__(self, input: Documents) -> Embeddings:
         import requests
@@ -87,25 +87,48 @@ class GeminiRequestsEmbeddingFunction(EmbeddingFunction):
                 ]
             }
             
-            # Retry loop for rate limits
-            max_retries = 3
             success = False
-            for attempt in range(max_retries):
-                res = requests.post(self.batch_url, json=payload, timeout=60)
-                res_data = res.json()
+            # We try each key once per batch before sleeping
+            for attempt in range(len(self.api_keys)):
+                current_key = self.api_keys[self.current_key_idx]
+                batch_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:batchEmbedContents?key={current_key}"
                 
-                if "embeddings" in res_data:
-                    for emb in res_data["embeddings"]:
-                        embeddings.append(emb["values"])
-                    success = True
-                    break
-                elif "error" in res_data and res_data["error"].get("code") == 429:
-                    print(f"Rate limit hit at batch {i}. Sleeping for 60 seconds...")
-                    time.sleep(60)
-                else:
-                    print(f"Gemini Embedding Error for batch {i}:", res_data)
-                    break
+                try:
+                    res = requests.post(batch_url, json=payload, timeout=60)
+                    res_data = res.json()
                     
+                    if "embeddings" in res_data:
+                        for emb in res_data["embeddings"]:
+                            embeddings.append(emb["values"])
+                        success = True
+                        break
+                    elif "error" in res_data and res_data["error"].get("code") == 429:
+                        print(f"Key {self.current_key_idx + 1}/{len(self.api_keys)} hit rate limit. Switching to next key...")
+                        self.current_key_idx = (self.current_key_idx + 1) % len(self.api_keys)
+                        continue
+                    else:
+                        print(f"Gemini Embedding Error for batch {i}:", res_data)
+                        break
+                except Exception as e:
+                    print("Embedding request exception:", e)
+                    break
+            
+            if not success:
+                # If all keys are exhausted and still hit 429, sleep and try the last key again
+                print(f"All keys exhausted for batch {i}. Sleeping for 60 seconds...")
+                time.sleep(60)
+                try:
+                    current_key = self.api_keys[self.current_key_idx]
+                    batch_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:batchEmbedContents?key={current_key}"
+                    res = requests.post(batch_url, json=payload, timeout=60)
+                    res_data = res.json()
+                    if "embeddings" in res_data:
+                        for emb in res_data["embeddings"]:
+                            embeddings.append(emb["values"])
+                        success = True
+                except:
+                    pass
+
             if not success:
                 # Fallback to zero vectors on permanent error
                 # gemini-embedding-2 dimension is 3072
@@ -115,9 +138,11 @@ class GeminiRequestsEmbeddingFunction(EmbeddingFunction):
         return embeddings
 
 chroma_client = chromadb.PersistentClient(path="chroma_db")
-GEMINI_API_KEY = os.getenv("GROQ_API_KEY") or os.getenv("GEMINI_API_KEY")
+raw_keys = os.getenv("GEMINI_API_KEYS") or os.getenv("GEMINI_API_KEY") or os.getenv("GROQ_API_KEY")
+api_keys_list = [k.strip() for k in raw_keys.split(",")] if raw_keys else []
+GEMINI_API_KEY = api_keys_list[0] if api_keys_list else ""
 
-gemini_ef = GeminiRequestsEmbeddingFunction(api_key=GEMINI_API_KEY)
+gemini_ef = GeminiRequestsEmbeddingFunction(api_keys=api_keys_list)
 # Naya collection name use kar rahe hain taaki purane dimensions se conflict na ho
 collection = chroma_client.get_or_create_collection(name="documents_gemini_2", embedding_function=gemini_ef)
 
