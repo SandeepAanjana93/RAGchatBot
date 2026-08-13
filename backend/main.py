@@ -67,7 +67,7 @@ from chromadb.api.types import Documents, EmbeddingFunction, Embeddings
 class GeminiRequestsEmbeddingFunction(EmbeddingFunction):
     def __init__(self, api_key: str):
         self.api_key = api_key
-        self.batch_url = f"https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:batchEmbedContents?key={self.api_key}"
+        self.batch_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:batchEmbedContents?key={self.api_key}"
 
     def __call__(self, input: Documents) -> Embeddings:
         import requests
@@ -75,7 +75,7 @@ class GeminiRequestsEmbeddingFunction(EmbeddingFunction):
         payload = {
             "requests": [
                 {
-                    "model": "models/text-embedding-004",
+                    "model": "models/gemini-embedding-2",
                     "content": {"parts": [{"text": text}]}
                 }
                 for text in input
