@@ -326,26 +326,23 @@ def process_single_page(args):
     return page_num, combined
 
 
-def extract_text_from_pdf(file_bytes: bytes, progress_callback=None) -> str:
-    page_data = []
-
+def extract_text_from_pdf(file_bytes: bytes, progress_callback=None) -> list:
     with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
         total_pages = len(pdf.pages)
-        page_area_cache = {}
+        results = {}
 
-        # Step 1: First decide which pages need OCR (fast, sequential)
-        needs_ocr_flags = []
-        page_image_boxes = []
-        for page in pdf.pages:
+        for i, page in enumerate(pdf.pages):
             page_text = page.extract_text() or ""
             tables = page.extract_tables()
             table_text = ""
-            for table in tables:
-                table_text += "\n[TABLE]\n" + table_to_text(table) + "\n"
+            if tables:
+                for table in tables:
+                    table_text += "\n[TABLE]\n" + table_to_text(table) + "\n"
 
             combined = (page_text + "\n" + table_text).strip()
             
             boxes = []
+            images_in_page = page.images
             if images_in_page:
                 for img in images_in_page:
                     if 'x0' in img and 'top' in img and 'x1' in img and 'bottom' in img:
@@ -359,31 +356,20 @@ def extract_text_from_pdf(file_bytes: bytes, progress_callback=None) -> str:
                 needs_ocr = True
             else:
                 needs_ocr = False
+                
+            ocr_image = None
+            if needs_ocr:
+                try:
+                    ocr_image = page.to_image(resolution=200).original
+                except Exception as e:
+                    print(f"Page to image error on page {i}:", e)
 
-            needs_ocr_flags.append(needs_ocr)
-            page_image_boxes.append(boxes if needs_ocr else [])
-            page_data.append((page_text, table_text))
-
-        # Parallel OCR — memory save karne ke liye workers=1 rakha hai
-        results = {}
-        completed = 0
-
-        tasks = [
-            (i, page_data[i][0], page_data[i][1], needs_ocr_flags[i], page_image_boxes[i])
-            for i in range(total_pages)
-        ]
-
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            futures = {executor.submit(process_single_page, task): task[0] for task in tasks}
-
-            for future in as_completed(futures):
-                page_num, combined_text = future.result()
-                results[page_num] = combined_text
-                completed += 1
-
-                if progress_callback:
-                    percent = int((completed / total_pages) * 100)
-                    progress_callback(percent)
+            _, combined_text = process_single_page((i, page_text, table_text, needs_ocr, ocr_image, boxes))
+            results[i] = combined_text
+            
+            if progress_callback:
+                percent = int(((i + 1) / total_pages) * 100)
+                progress_callback(percent)
 
         pages_data = [{"page": i+1, "text": results.get(i, "")} for i in range(total_pages)]
         return pages_data
