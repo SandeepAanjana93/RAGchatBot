@@ -71,28 +71,32 @@ class GeminiRequestsEmbeddingFunction(EmbeddingFunction):
 
     def __call__(self, input: Documents) -> Embeddings:
         import requests
-        # Batch request to Gemini API
-        payload = {
-            "requests": [
-                {
-                    "model": "models/gemini-embedding-2",
-                    "content": {"parts": [{"text": text}]}
-                }
-                for text in input
-            ]
-        }
-        res = requests.post(self.batch_url, json=payload, timeout=60)
-        res_data = res.json()
-        
         embeddings = []
-        if "embeddings" in res_data:
-            for emb in res_data["embeddings"]:
-                embeddings.append(emb["values"])
-        else:
-            print("Gemini Embedding Error:", res_data)
-            # Fallback to zero vectors on error to prevent crashing the whole pipeline
-            for _ in input:
-                embeddings.append([0.0] * 768)
+        batch_size = 100
+        
+        for i in range(0, len(input), batch_size):
+            batch = input[i:i+batch_size]
+            payload = {
+                "requests": [
+                    {
+                        "model": "models/gemini-embedding-2",
+                        "content": {"parts": [{"text": text}]}
+                    }
+                    for text in batch
+                ]
+            }
+            res = requests.post(self.batch_url, json=payload, timeout=60)
+            res_data = res.json()
+            
+            if "embeddings" in res_data:
+                for emb in res_data["embeddings"]:
+                    embeddings.append(emb["values"])
+            else:
+                print(f"Gemini Embedding Error for batch {i}:", res_data)
+                # Fallback to zero vectors on error to prevent crashing the whole pipeline
+                for _ in batch:
+                    embeddings.append([0.0] * 768)
+                    
         return embeddings
 
 chroma_client = chromadb.PersistentClient(path="chroma_db")
