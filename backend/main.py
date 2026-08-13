@@ -71,8 +71,9 @@ class GeminiRequestsEmbeddingFunction(EmbeddingFunction):
 
     def __call__(self, input: Documents) -> Embeddings:
         import requests
+        import time
         embeddings = []
-        batch_size = 100
+        batch_size = 50  # 50 per batch to be safe
         
         for i in range(0, len(input), batch_size):
             batch = input[i:i+batch_size]
@@ -85,17 +86,31 @@ class GeminiRequestsEmbeddingFunction(EmbeddingFunction):
                     for text in batch
                 ]
             }
-            res = requests.post(self.batch_url, json=payload, timeout=60)
-            res_data = res.json()
             
-            if "embeddings" in res_data:
-                for emb in res_data["embeddings"]:
-                    embeddings.append(emb["values"])
-            else:
-                print(f"Gemini Embedding Error for batch {i}:", res_data)
-                # Fallback to zero vectors on error to prevent crashing the whole pipeline
+            # Retry loop for rate limits
+            max_retries = 3
+            success = False
+            for attempt in range(max_retries):
+                res = requests.post(self.batch_url, json=payload, timeout=60)
+                res_data = res.json()
+                
+                if "embeddings" in res_data:
+                    for emb in res_data["embeddings"]:
+                        embeddings.append(emb["values"])
+                    success = True
+                    break
+                elif "error" in res_data and res_data["error"].get("code") == 429:
+                    print(f"Rate limit hit at batch {i}. Sleeping for 60 seconds...")
+                    time.sleep(60)
+                else:
+                    print(f"Gemini Embedding Error for batch {i}:", res_data)
+                    break
+                    
+            if not success:
+                # Fallback to zero vectors on permanent error
+                # gemini-embedding-2 dimension is 3072
                 for _ in batch:
-                    embeddings.append([0.0] * 768)
+                    embeddings.append([0.0] * 3072)
                     
         return embeddings
 
