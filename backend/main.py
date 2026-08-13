@@ -119,7 +119,7 @@ GEMINI_API_KEY = os.getenv("GROQ_API_KEY") or os.getenv("GEMINI_API_KEY")
 
 gemini_ef = GeminiRequestsEmbeddingFunction(api_key=GEMINI_API_KEY)
 # Naya collection name use kar rahe hain taaki purane dimensions se conflict na ho
-collection = chroma_client.get_or_create_collection(name="documents_gemini", embedding_function=gemini_ef)
+collection = chroma_client.get_or_create_collection(name="documents_gemini_2", embedding_function=gemini_ef)
 
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "supersecretadmin")
 
