@@ -62,12 +62,43 @@ sessions_collection = db["chat_sessions"]
 messages_collection = db["chat_messages"]
 
 
-from chromadb.utils import embedding_functions
+from chromadb.api.types import Documents, EmbeddingFunction, Embeddings
+
+class GeminiRequestsEmbeddingFunction(EmbeddingFunction):
+    def __init__(self, api_key: str):
+        self.api_key = api_key
+        self.batch_url = f"https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:batchEmbedContents?key={self.api_key}"
+
+    def __call__(self, input: Documents) -> Embeddings:
+        import requests
+        # Batch request to Gemini API
+        payload = {
+            "requests": [
+                {
+                    "model": "models/text-embedding-004",
+                    "content": {"parts": [{"text": text}]}
+                }
+                for text in input
+            ]
+        }
+        res = requests.post(self.batch_url, json=payload, timeout=60)
+        res_data = res.json()
+        
+        embeddings = []
+        if "embeddings" in res_data:
+            for emb in res_data["embeddings"]:
+                embeddings.append(emb["values"])
+        else:
+            print("Gemini Embedding Error:", res_data)
+            # Fallback to zero vectors on error to prevent crashing the whole pipeline
+            for _ in input:
+                embeddings.append([0.0] * 768)
+        return embeddings
 
 chroma_client = chromadb.PersistentClient(path="chroma_db")
 GEMINI_API_KEY = os.getenv("GROQ_API_KEY") or os.getenv("GEMINI_API_KEY")
 
-gemini_ef = embedding_functions.GoogleGenerativeAiEmbeddingFunction(api_key=GEMINI_API_KEY)
+gemini_ef = GeminiRequestsEmbeddingFunction(api_key=GEMINI_API_KEY)
 # Naya collection name use kar rahe hain taaki purane dimensions se conflict na ho
 collection = chroma_client.get_or_create_collection(name="documents_gemini", embedding_function=gemini_ef)
 
