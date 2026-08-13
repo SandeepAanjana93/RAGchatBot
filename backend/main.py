@@ -62,10 +62,15 @@ sessions_collection = db["chat_sessions"]
 messages_collection = db["chat_messages"]
 
 
-chroma_client = chromadb.PersistentClient(path="chroma_db")
-collection = chroma_client.get_or_create_collection(name="documents")
+from chromadb.utils import embedding_functions
 
+chroma_client = chromadb.PersistentClient(path="chroma_db")
 GEMINI_API_KEY = os.getenv("GROQ_API_KEY") or os.getenv("GEMINI_API_KEY")
+
+gemini_ef = embedding_functions.GoogleGenerativeAiEmbeddingFunction(api_key=GEMINI_API_KEY)
+# Naya collection name use kar rahe hain taaki purane dimensions se conflict na ho
+collection = chroma_client.get_or_create_collection(name="documents_gemini", embedding_function=gemini_ef)
+
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "supersecretadmin")
 
 JWT_SECRET = os.getenv("JWT_SECRET", "super-secret-key-1234")
@@ -490,10 +495,10 @@ def clear_all_data(admin_token: str = Header(None)):
     
     # Clear ChromaDB
     try:
-        chroma_client.delete_collection(name="documents")
+        chroma_client.delete_collection(name="documents_gemini")
     except Exception:
         pass
-    collection = chroma_client.get_or_create_collection(name="documents")
+    collection = chroma_client.get_or_create_collection(name="documents_gemini", embedding_function=gemini_ef)
     
     return {"message": "All data (Files, Chats, ChromaDB) has been completely wiped. You can now start fresh."}
 
